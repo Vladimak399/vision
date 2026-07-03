@@ -2,11 +2,23 @@
 
 This folder uses the standard Supabase project layout.
 
-## Apply the first migration manually
+## GitHub Integration
 
-Open Supabase Dashboard, then SQL Editor, then run:
+Supabase GitHub Integration reads this folder from the repository.
 
-`supabase/migrations/20260703132000_foundation.sql`
+Use these settings in Supabase Dashboard:
+
+- Repository: `Vladimak399/vision`
+- Working directory: `.`
+- Production branch: `main`
+- Deploy to production: enabled
+
+When a commit reaches `main`, Supabase can apply new files from `supabase/migrations` automatically.
+
+## Migrations
+
+- `20260703132000_foundation.sql` creates the main database schema, roles and RLS policies.
+- `20260703133000_storage_buckets.sql` creates private Storage buckets for monitoring photos and Excel reports.
 
 ## Local CLI flow
 
@@ -25,3 +37,12 @@ Copy values from Supabase Dashboard into `.env.local` and Vercel:
 `SUPABASE_SERVICE_ROLE_KEY`
 
 Do not expose `SUPABASE_SERVICE_ROLE_KEY` in client components. It is only for server-side workers and protected server actions.
+
+## Storage path convention
+
+Files in private buckets must start with the company UUID:
+
+`company_id/session_id/file_name.jpg`
+`company_id/report_id/file_name.xlsx`
+
+Storage policies use the first folder segment as `company_id`.
