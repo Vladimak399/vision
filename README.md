@@ -8,6 +8,15 @@
 
 Импорт ассортимента, мониторинг магазина, загрузка до 500 фотографий, AI-распознавание, сопоставление, review спорных позиций, Excel и базовая история цен. Онлайн-парсинг, уведомления, PDF/CSV и расширенная аналитика запланированы после MVP.
 
+## Local development
+
+npm install
+npm run dev
+npm run typecheck
+npm run build
+
+Environment variables are listed in `.env.example`.
+
 ## Документация
 
 1. [Vision](docs/01-vision.md)
