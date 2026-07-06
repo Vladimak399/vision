@@ -13,6 +13,12 @@ export type MonitoringSessionCreateState = {
   error?: string;
 };
 
+type MonitoringSessionLifecycleRow = {
+  id: string;
+  status: "draft" | "uploading" | "processing" | "review" | "completed" | "failed" | "cancelled";
+  started_at: string | null;
+};
+
 export async function createMonitoringSession(
   _state: MonitoringSessionCreateState,
   formData: FormData,
@@ -75,7 +81,6 @@ export async function createMonitoringSession(
   redirect("/app/monitoring");
 }
 
-
 const MONITORING_PHOTOS_BUCKET = "monitoring-photos";
 const MAX_MONITORING_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MONITORING_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -120,10 +125,11 @@ export async function uploadMonitoringPhotos(
   const supabase = await createSupabaseServerClient();
   const { data: session, error: sessionError } = await supabase
     .from("monitoring_sessions")
-    .select("id")
+    .select("id, status, started_at")
     .eq("company_id", companyId)
     .eq("id", sessionId)
-    .maybeSingle();
+    .maybeSingle()
+    .returns<MonitoringSessionLifecycleRow | null>();
 
   if (sessionError) {
     return { error: `Не удалось проверить сессию мониторинга: ${sessionError.message}` };
@@ -131,6 +137,10 @@ export async function uploadMonitoringPhotos(
 
   if (!session) {
     return { error: "Сессия мониторинга не найдена в текущей компании." };
+  }
+
+  if (["completed", "cancelled"].includes(session.status)) {
+    return { error: "Нельзя загружать фото в завершённую или отменённую сессию." };
   }
 
   const files = formData.getAll("photos").filter((value): value is File => value instanceof File && value.size > 0);
@@ -146,6 +156,19 @@ export async function uploadMonitoringPhotos(
 
     if (file.size > MAX_MONITORING_PHOTO_SIZE_BYTES) {
       return { error: `Файл ${file.name || "без названия"} больше 10 МБ.` };
+    }
+  }
+
+  if (session.status === "draft") {
+    const { error: lifecycleError } = await supabase
+      .from("monitoring_sessions")
+      .update({ status: "uploading", started_at: session.started_at ?? new Date().toISOString() })
+      .eq("company_id", companyId)
+      .eq("id", sessionId)
+      .eq("status", "draft");
+
+    if (lifecycleError) {
+      return { error: `Не удалось обновить статус сессии: ${lifecycleError.message}` };
     }
   }
 
@@ -184,8 +207,9 @@ export async function uploadMonitoringPhotos(
     uploadedCount += 1;
   }
 
+  revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
-  return { message: `Загружено фото: ${uploadedCount}.` };
+  return { message: `Загружено фото: ${uploadedCount}. Статус сессии обновлён.` };
 }
 
 export type ManualRecognizedItemState = {
@@ -272,10 +296,11 @@ export async function createManualRecognizedItem(
   const supabase = await createSupabaseServerClient();
   const { data: session, error: sessionError } = await supabase
     .from("monitoring_sessions")
-    .select("id")
+    .select("id, status, started_at")
     .eq("company_id", companyId)
     .eq("id", sessionId)
-    .maybeSingle();
+    .maybeSingle()
+    .returns<MonitoringSessionLifecycleRow | null>();
 
   if (sessionError) {
     return { error: `Не удалось проверить сессию мониторинга: ${sessionError.message}` };
@@ -283,6 +308,10 @@ export async function createManualRecognizedItem(
 
   if (!session) {
     return { error: "Сессия мониторинга не найдена в текущей компании." };
+  }
+
+  if (["completed", "cancelled"].includes(session.status)) {
+    return { error: "Нельзя добавлять товары в завершённую или отменённую сессию." };
   }
 
   const { data: photo, error: photoError } = await supabase
@@ -318,8 +347,18 @@ export async function createManualRecognizedItem(
     return { error: `Не удалось добавить товар: ${insertError.message}` };
   }
 
+  if (["draft", "uploading", "processing"].includes(session.status)) {
+    await supabase
+      .from("monitoring_sessions")
+      .update({ status: "review", started_at: session.started_at ?? new Date().toISOString() })
+      .eq("company_id", companyId)
+      .eq("id", sessionId)
+      .in("status", ["draft", "uploading", "processing"]);
+  }
+
+  revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
-  return { message: "Товар добавлен." };
+  return { message: "Товар добавлен. Сессия переведена в статус review." };
 }
 
 function parseRubPriceToMinor(value: string) {
