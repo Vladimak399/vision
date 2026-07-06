@@ -5,6 +5,32 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "../../lib/supabase/browser";
 
+const FALLBACK_NEXT_PATH = "/app";
+
+function getSafeNextPath(value: string | null): string {
+  if (!value) {
+    return FALLBACK_NEXT_PATH;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) {
+    return FALLBACK_NEXT_PATH;
+  }
+
+  try {
+    const url = new URL(trimmed, "https://pricevision.local");
+    const isAllowedAppPath = url.pathname === "/app" || url.pathname.startsWith("/app/");
+
+    if (url.origin !== "https://pricevision.local" || !isAllowedAppPath) {
+      return FALLBACK_NEXT_PATH;
+    }
+
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return FALLBACK_NEXT_PATH;
+  }
+}
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -14,7 +40,7 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const next = searchParams.get("next") || "/app";
+  const next = getSafeNextPath(searchParams.get("next"));
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
