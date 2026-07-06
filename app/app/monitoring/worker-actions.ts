@@ -31,6 +31,11 @@ type MonitoringPhotoRow = {
   status: string;
 };
 
+type RecognitionJobResult = {
+  ok: boolean;
+  skipped?: boolean;
+};
+
 export type ProcessQueueState = {
   error?: string;
   message?: string;
@@ -118,11 +123,14 @@ export async function processQueuedRecognitionJobs(
 
   let processed = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const job of jobs) {
     const result = await processOneRecognitionJob({ companyId, sessionId, job, supabase });
 
-    if (result.ok) {
+    if (result.skipped) {
+      skipped += 1;
+    } else if (result.ok) {
       processed += 1;
     } else {
       failed += 1;
@@ -134,7 +142,7 @@ export async function processQueuedRecognitionJobs(
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
   revalidatePath(`/app/monitoring/${sessionId}/review`);
-  return { message: `Обработана пачка: успешно ${processed}, ошибок ${failed}.` };
+  return { message: `Обработана пачка: успешно ${processed}, ошибок ${failed}, пропущено ${skipped}.` };
 }
 
 async function processOneRecognitionJob({
@@ -147,12 +155,29 @@ async function processOneRecognitionJob({
   sessionId: string;
   job: QueueJobRow;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
-}) {
+}): Promise<RecognitionJobResult> {
   const photoId = job.payload.photo_id;
 
   if (!photoId || job.payload.company_id !== companyId || job.payload.session_id !== sessionId) {
     await markJobFailed(supabase, companyId, job.id, "Invalid job payload.");
     return { ok: false };
+  }
+
+  const { data: reservedJob, error: reserveJobError } = await supabase
+    .from("jobs")
+    .update({ status: "running", attempts: job.attempts + 1, error: null })
+    .eq("company_id", companyId)
+    .eq("id", job.id)
+    .eq("status", "queued")
+    .select("id")
+    .maybeSingle();
+
+  if (reserveJobError) {
+    return { ok: false };
+  }
+
+  if (!reservedJob) {
+    return { ok: false, skipped: true };
   }
 
   const { data: photo, error: photoError } = await supabase
@@ -176,27 +201,19 @@ async function processOneRecognitionJob({
     return { ok: false };
   }
 
-  const { error: claimError } = await supabase
-    .from("jobs")
-    .update({ status: "running", attempts: job.attempts + 1, error: null })
-    .eq("company_id", companyId)
-    .eq("id", job.id)
-    .eq("status", "queued");
-
-  if (claimError) {
-    return { ok: false };
-  }
-
-  const { error: photoProcessingError } = await supabase
+  const { data: reservedPhoto, error: photoProcessingError } = await supabase
     .from("monitoring_photos")
     .update({ status: "processing", error: null })
     .eq("company_id", companyId)
     .eq("session_id", sessionId)
     .eq("id", photoId)
-    .eq("status", "queued");
+    .eq("status", "queued")
+    .select("id")
+    .maybeSingle();
 
-  if (photoProcessingError) {
-    await markJobFailed(supabase, companyId, job.id, photoProcessingError.message);
+  if (photoProcessingError || !reservedPhoto) {
+    const message = photoProcessingError?.message ?? "Photo is already in use.";
+    await markJobFailed(supabase, companyId, job.id, message);
     return { ok: false };
   }
 

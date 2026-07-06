@@ -8,7 +8,8 @@ const initialState: ProcessQueueState = {};
 
 export function ProcessQueueForm({ sessionId }: { sessionId: string }) {
   const [state, formAction, isPending] = useActionState(processQueuedRecognitionJobs, initialState);
-  const href = `/app/monitoring/${sessionId}` + "/review";
+  const reviewHref = `/app/monitoring/${sessionId}/review`;
+  const progressHref = `/app/monitoring/${sessionId}/departments`;
 
   return (
     <div style={{ display: "grid", gap: "0.5rem" }}>
@@ -21,7 +22,10 @@ export function ProcessQueueForm({ sessionId }: { sessionId: string }) {
       <p style={{ color: "#4b5563", margin: 0 }}>Берёт из очереди до 10 фото. Для большого магазина нажимай повторно, пока queued не станет 0.</p>
       {state.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{state.error}</p> : null}
       {state.message ? <p style={{ color: "#047857", margin: 0 }}>{state.message}</p> : null}
-      <a href={href}>Проверить товары</a>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+        <a href={reviewHref}>Проверить товары</a>
+        <a href={progressHref}>Прогресс по отделам</a>
+      </div>
     </div>
   );
 }
