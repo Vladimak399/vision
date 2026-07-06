@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "../../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../../server/primary-membership";
+import { RecoveryForm } from "../recovery-form";
 
 type PageProps = {
   params: Promise<{
@@ -107,6 +108,11 @@ export default async function DepartmentProgressPage({ params }: PageProps) {
           {session.stores?.name ?? "Магазин"} · {session.stores?.address ?? "адрес не указан"} · статус: {session.status}
         </p>
       </header>
+
+      <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem" }}>
+        <h2 style={{ marginTop: 0 }}>Восстановление</h2>
+        <RecoveryForm sessionId={sessionId} />
+      </section>
 
       <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem" }}>
         <h2 style={{ marginTop: 0 }}>Фото</h2>
