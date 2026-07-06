@@ -45,6 +45,15 @@ type RecognizedItem = {
   } | null;
 };
 
+type RecognitionJob = {
+  status: string;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  estimated_cost_microusd: number | null;
+  duration_ms: number | null;
+};
+
 type PageProps = {
   params: Promise<{
     sessionId: string;
@@ -110,6 +119,14 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
     .order("created_at", { ascending: false })
     .returns<RecognizedItem[]>();
 
+  const { data: recognitionJobs, error: recognitionJobsError } = await supabase
+    .from("jobs")
+    .select("status, model, input_tokens, output_tokens, estimated_cost_microusd, duration_ms")
+    .eq("company_id", companyId)
+    .eq("session_id", session.id)
+    .eq("kind", "photo_ocr")
+    .returns<RecognitionJob[]>();
+
   const photoOptions = (photos ?? []).map((photo) => ({
     id: photo.id,
     label: getStorageFilename(photo.storage_path) || formatShortId(photo.id),
@@ -117,6 +134,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
   const canCreateManualItems = ["admin", "manager"].includes(membershipResult.membership.role);
   const photoStatusCounts = getPhotoStatusCounts(photos ?? []);
   const queueablePhotoCount = (photoStatusCounts.uploaded ?? 0) + (photoStatusCounts.failed ?? 0);
+  const recognitionJobSummary = getRecognitionJobSummary(recognitionJobs ?? []);
 
   return (
     <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 960, padding: "0 1rem" }}>
@@ -159,6 +177,16 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
                 </span>
               ))}
             </div>
+            {recognitionJobsError ? (
+              <p style={{ color: "#b45309", margin: 0 }}>Не удалось загрузить usage OCR: {recognitionJobsError.message}</p>
+            ) : (
+              <dl style={{ display: "grid", gap: "0.5rem", margin: 0 }}>
+                <DetailRow label="OCR jobs" value={String(recognitionJobSummary.totalJobs)} />
+                <DetailRow label="Токены" value={`${recognitionJobSummary.inputTokens} input / ${recognitionJobSummary.outputTokens} output`} />
+                <DetailRow label="Стоимость" value={formatMicroUsd(recognitionJobSummary.estimatedCostMicrousd)} />
+                <DetailRow label="Среднее время" value={formatDurationMs(recognitionJobSummary.averageDurationMs)} />
+              </dl>
+            )}
             <QueueRecognitionForm sessionId={session.id} disabled={queueablePhotoCount === 0} />
             <ProcessQueueForm sessionId={session.id} />
           </div>
@@ -300,6 +328,41 @@ function getPhotoStatusCounts(photos: MonitoringPhoto[]) {
     counts[photo.status] = (counts[photo.status] ?? 0) + 1;
     return counts;
   }, {});
+}
+
+function getRecognitionJobSummary(jobs: RecognitionJob[]) {
+  const durationValues = jobs
+    .map((job) => job.duration_ms)
+    .filter((duration): duration is number => typeof duration === "number" && Number.isFinite(duration));
+
+  return {
+    totalJobs: jobs.length,
+    inputTokens: jobs.reduce((sum, job) => sum + (job.input_tokens ?? 0), 0),
+    outputTokens: jobs.reduce((sum, job) => sum + (job.output_tokens ?? 0), 0),
+    estimatedCostMicrousd: jobs.reduce((sum, job) => sum + (job.estimated_cost_microusd ?? 0), 0),
+    averageDurationMs:
+      durationValues.length > 0 ? Math.round(durationValues.reduce((sum, duration) => sum + duration, 0) / durationValues.length) : null,
+  };
+}
+
+function formatMicroUsd(value: number) {
+  if (value <= 0) {
+    return "$0.0000";
+  }
+
+  return `$${(value / 1_000_000).toFixed(value >= 100_000 ? 2 : 4)}`;
+}
+
+function formatDurationMs(value: number | null) {
+  if (value === null) {
+    return "—";
+  }
+
+  if (value < 1000) {
+    return `${value} мс`;
+  }
+
+  return `${(value / 1000).toFixed(1)} сек`;
 }
 
 function getRecognizedItemPhotoLabel(item: RecognizedItem) {
