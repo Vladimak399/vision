@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
+import { MonitoringPhotoUploadForm } from "./photo-upload-form";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,13 @@ type MonitoringSession = {
     name: string;
     address: string | null;
   } | null;
+};
+
+type MonitoringPhoto = {
+  id: string;
+  storage_path: string;
+  status: string;
+  uploaded_at: string | null;
 };
 
 type PageProps = {
@@ -67,11 +75,13 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
     return <SessionNotFound />;
   }
 
-  const { count: photoCount, error: photoCountError } = await supabase
+  const { data: photos, error: photosError } = await supabase
     .from("monitoring_photos")
-    .select("id", { count: "exact", head: true })
+    .select("id, storage_path, status, uploaded_at")
     .eq("company_id", membershipResult.membership.companyId)
-    .eq("session_id", session.id);
+    .eq("session_id", session.id)
+    .order("uploaded_at", { ascending: false })
+    .returns<MonitoringPhoto[]>();
 
   return (
     <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 960, padding: "0 1rem" }}>
@@ -85,8 +95,8 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
 
       <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem" }}>
         <h2 style={{ marginTop: 0 }}>Детали сессии</h2>
-        {photoCountError ? (
-          <p style={{ color: "#b45309" }}>Не удалось загрузить количество фото: {photoCountError.message}</p>
+        {photosError ? (
+          <p style={{ color: "#b45309" }}>Не удалось загрузить фото: {photosError.message}</p>
         ) : null}
         <dl style={{ display: "grid", gap: "0.75rem", margin: 0 }}>
           <DetailRow label="ID сессии" value={session.id} />
@@ -97,14 +107,34 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
           <DetailRow label="Создана" value={formatDateTime(session.created_at)} />
           {session.started_at ? <DetailRow label="Начата" value={formatDateTime(session.started_at)} /> : null}
           {session.completed_at ? <DetailRow label="Завершена" value={formatDateTime(session.completed_at)} /> : null}
-          <DetailRow label="Фото" value={String(photoCount ?? 0)} />
+          <DetailRow label="Фото" value={String(photos?.length ?? 0)} />
         </dl>
       </section>
 
-      <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb" }}>
-        <h2 style={{ marginTop: 0 }}>Фото</h2>
-        <p style={{ marginBottom: "0.25rem" }}>Фото пока не загружены</p>
-        <p style={{ margin: 0, color: "#4b5563" }}>Загрузка фото будет добавлена следующим этапом</p>
+      <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb", display: "grid", gap: "1rem" }}>
+        <h2 style={{ margin: 0 }}>Фото</h2>
+        <MonitoringPhotoUploadForm sessionId={session.id} />
+        <div>
+          <h3 style={{ marginTop: 0 }}>Загруженные фото</h3>
+          {photosError ? (
+            <p style={{ color: "#b45309" }}>Список фото временно недоступен.</p>
+          ) : photos && photos.length > 0 ? (
+            <ul style={{ display: "grid", gap: "0.75rem", listStyle: "none", margin: 0, padding: 0 }}>
+              {photos.map((photo) => (
+                <li key={photo.id} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, padding: "0.75rem" }}>
+                  <dl style={{ display: "grid", gap: "0.35rem", margin: 0 }}>
+                    <DetailRow label="Дата загрузки" value={photo.uploaded_at ? formatDateTime(photo.uploaded_at) : "—"} />
+                    <DetailRow label="Статус" value={photo.status} />
+                    <DetailRow label="Файл" value={getStorageFilename(photo.storage_path) || formatShortId(photo.id)} />
+                    <DetailRow label="Путь в Storage" value={photo.storage_path} />
+                  </dl>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ margin: 0, color: "#4b5563" }}>Фото пока не загружены. Форма выше готова к первой загрузке.</p>
+          )}
+        </div>
       </section>
     </main>
   );
@@ -155,4 +185,10 @@ function formatDateTime(value: string) {
 
 function formatShortId(value: string) {
   return value.slice(0, 8);
+}
+
+
+function getStorageFilename(storagePath: string) {
+  const segments = storagePath.split("/").filter(Boolean);
+  return segments.at(-1) ?? "";
 }
