@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "../../../../server/auth";
+import { CATALOG_WRITE_ROLES, hasCompanyRole, roleList } from "../../../../server/company-access";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 import { CatalogImportForm } from "./import-form";
 
@@ -18,6 +19,8 @@ export default async function CatalogImportPage() {
   if (membershipResult.status !== "ok" || !membershipResult.membership) {
     redirect("/app/catalog");
   }
+
+  const canManageCatalog = hasCompanyRole(membershipResult.membership, CATALOG_WRITE_ROLES);
 
   return (
     <main style={{ display: "grid", gap: "1.5rem", margin: "2rem auto", maxWidth: 960, padding: "0 1rem" }}>
@@ -39,18 +42,29 @@ export default async function CatalogImportPage() {
         </p>
       </header>
 
-      <section style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "1.5rem" }}>
-        <h2 style={{ marginTop: 0 }}>Поддерживаемые колонки</h2>
-        <ul style={{ marginBottom: 0, paddingLeft: "1.25rem" }}>
-          <li><strong>external_sku</strong> или <strong>sku</strong> — обязательный внешний артикул.</li>
-          <li><strong>name</strong> — обязательное название товара.</li>
-          <li><strong>brand</strong> — бренд товара.</li>
-          <li><strong>size_text</strong> или <strong>size</strong> — размер или фасовка.</li>
-          <li><strong>price</strong> или <strong>price_rub</strong> — цена в рублях, которая будет сохранена в копейках.</li>
-        </ul>
-      </section>
+      {!canManageCatalog ? (
+        <section style={{ border: "1px solid #f59e0b", borderRadius: 12, padding: "1rem", background: "#fffbeb" }}>
+          <h2 style={{ marginTop: 0, color: "#92400e" }}>Недостаточно прав</h2>
+          <p style={{ marginBottom: 0, color: "#b45309" }}>
+            Импортировать каталог могут только {roleList(CATALOG_WRITE_ROLES)}. Обратитесь к администратору компании.
+          </p>
+        </section>
+      ) : (
+        <>
+          <section style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "1.5rem" }}>
+            <h2 style={{ marginTop: 0 }}>Поддерживаемые колонки</h2>
+            <ul style={{ marginBottom: 0, paddingLeft: "1.25rem" }}>
+              <li><strong>external_sku</strong> или <strong>sku</strong> — обязательный внешний артикул.</li>
+              <li><strong>name</strong> — обязательное название товара.</li>
+              <li><strong>brand</strong> — бренд товара.</li>
+              <li><strong>size_text</strong> или <strong>size</strong> — размер или фасовка.</li>
+              <li><strong>price</strong> или <strong>price_rub</strong> — цена в рублях, которая будет сохранена в копейках.</li>
+            </ul>
+          </section>
 
-      <CatalogImportForm />
+          <CatalogImportForm />
+        </>
+      )}
     </main>
   );
 }
