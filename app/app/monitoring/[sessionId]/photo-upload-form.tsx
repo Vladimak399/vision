@@ -1,42 +1,216 @@
 "use client";
 
-import { useActionState, useState, type FormEvent } from "react";
+import { startTransition, useActionState, useState, type FormEvent } from "react";
 
 import { uploadMonitoringPhotos, type MonitoringPhotoUploadState } from "../actions";
 
 const initialState: MonitoringPhotoUploadState = {};
 const MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
+const COMPRESSION_TARGET_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_LONG_SIDE = 2400;
+const JPEG_QUALITY_STEPS = [0.9, 0.86, 0.82] as const;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const UNSUPPORTED_IPHONE_TYPES = new Set(["image/heic", "image/heif"]);
+
+type PreparedPhoto = {
+  file: File;
+  originalSize: number;
+  compressed: boolean;
+};
+
+function formatFileSize(size: number) {
+  const megabytes = size / (1024 * 1024);
+  return `${megabytes.toFixed(megabytes >= 10 ? 1 : 2)} МБ`;
+}
+
+function getPreparedFileName(file: File) {
+  const baseName = file.name.replace(/\.[^.]+$/, "") || "photo";
+  return `${baseName}.jpg`;
+}
+
+async function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Canvas did not return a blob."));
+          return;
+        }
+
+        resolve(blob);
+      },
+      "image/jpeg",
+      quality,
+    );
+  });
+}
+
+async function decodeImage(file: File) {
+  if ("createImageBitmap" in window) {
+    return createImageBitmap(file, { imageOrientation: "from-image" });
+  }
+
+  const url = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("Image could not be decoded."));
+      element.src = url;
+    });
+
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function compressImage(file: File) {
+  const image = await decodeImage(file);
+  const longSide = Math.max(image.width, image.height);
+  const scale = longSide > MAX_IMAGE_LONG_SIDE ? MAX_IMAGE_LONG_SIDE / longSide : 1;
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d", { alpha: false });
+
+  if (!context) {
+    throw new Error("Canvas 2D context is unavailable.");
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  if ("close" in image && typeof image.close === "function") {
+    image.close();
+  }
+
+  let bestBlob: Blob | null = null;
+
+  for (const quality of JPEG_QUALITY_STEPS) {
+    const blob = await canvasToJpegBlob(canvas, quality);
+    bestBlob = blob;
+
+    if (blob.size <= COMPRESSION_TARGET_BYTES) {
+      break;
+    }
+  }
+
+  if (!bestBlob) {
+    throw new Error("Image compression did not produce a file.");
+  }
+
+  return new File([bestBlob], getPreparedFileName(file), {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
+async function preparePhoto(file: File): Promise<PreparedPhoto> {
+  if (file.size <= COMPRESSION_TARGET_BYTES) {
+    return { file, originalSize: file.size, compressed: false };
+  }
+
+  const compressedFile = await compressImage(file);
+
+  if (file.size <= MAX_PHOTO_SIZE_BYTES && compressedFile.size >= file.size) {
+    return { file, originalSize: file.size, compressed: false };
+  }
+
+  return { file: compressedFile, originalSize: file.size, compressed: true };
+}
 
 export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) {
   const [state, formAction, isPending] = useActionState(uploadMonitoringPhotos, initialState);
   const [clientError, setClientError] = useState<string | null>(null);
+  const [compressionMessage, setCompressionMessage] = useState<string | null>(null);
+  const [isPreparing, setIsPreparing] = useState(false);
+  const isBusy = isPending || isPreparing;
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    const formData = new FormData(event.currentTarget);
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (isBusy) {
+      return;
+    }
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const files = formData.getAll("photos").filter((value): value is File => value instanceof File && value.size > 0);
 
+    setClientError(null);
+    setCompressionMessage(null);
+
     if (files.length === 0) {
-      event.preventDefault();
       setClientError("Выберите хотя бы одно фото.");
       return;
     }
 
     for (const file of files) {
-      if (!ALLOWED_PHOTO_TYPES.has(file.type)) {
-        event.preventDefault();
-        setClientError(`Файл ${file.name || "без названия"} имеет неподдерживаемый тип. Разрешены JPEG, PNG и WebP.`);
+      if (UNSUPPORTED_IPHONE_TYPES.has(file.type)) {
+        setClientError(
+          `Файл ${file.name || "без названия"} имеет неподдерживаемый формат HEIC/HEIF. Выберите JPEG, PNG или WebP.`,
+        );
         return;
       }
 
-      if (file.size > MAX_PHOTO_SIZE_BYTES) {
-        event.preventDefault();
-        setClientError(`Файл ${file.name || "без названия"} больше 10 МБ.`);
+      if (!ALLOWED_PHOTO_TYPES.has(file.type)) {
+        setClientError(`Файл ${file.name || "без названия"} имеет неподдерживаемый тип. Разрешены JPEG, PNG и WebP.`);
         return;
       }
     }
 
-    setClientError(null);
+    setIsPreparing(true);
+    setCompressionMessage("Сжимаем фото перед загрузкой…");
+
+    try {
+      const preparedPhotos = await Promise.all(files.map(preparePhoto));
+      const oversizedPhoto = preparedPhotos.find((photo) => photo.file.size > MAX_PHOTO_SIZE_BYTES);
+
+      if (oversizedPhoto) {
+        setClientError(
+          `Файл ${oversizedPhoto.file.name || "без названия"} после подготовки больше 10 МБ. Попробуйте выбрать другое фото или уменьшить размер.`,
+        );
+        setCompressionMessage(null);
+        return;
+      }
+
+      const compressedPhotos = preparedPhotos.filter((photo) => photo.compressed);
+
+      if (compressedPhotos.length > 0) {
+        setCompressionMessage(
+          compressedPhotos
+            .map(
+              (photo) =>
+                `${photo.file.name}: ${formatFileSize(photo.originalSize)} → ${formatFileSize(photo.file.size)}`,
+            )
+            .join("; "),
+        );
+      } else {
+        setCompressionMessage("Фото уже подходят по размеру, загружаем без сжатия.");
+      }
+
+      const preparedFormData = new FormData(form);
+      preparedFormData.delete("photos");
+
+      for (const photo of preparedPhotos) {
+        preparedFormData.append("photos", photo.file, photo.file.name);
+      }
+
+      startTransition(() => {
+        formAction(preparedFormData);
+      });
+    } catch {
+      setClientError("Не удалось подготовить фото. Попробуйте выбрать другое фото или уменьшить размер.");
+      setCompressionMessage(null);
+    } finally {
+      setIsPreparing(false);
+    }
   }
 
   return (
@@ -47,17 +221,21 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
         <input
           type="file"
           name="photos"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
           multiple
           required
-          disabled={isPending}
+          disabled={isBusy}
         />
       </label>
-      <p style={{ color: "#4b5563", margin: 0 }}>JPEG, PNG или WebP, до 10 МБ на файл.</p>
+      <p style={{ color: "#4b5563", margin: 0 }}>
+        JPEG, PNG или WebP. Большие фото будут бережно сжаты перед загрузкой; серверный лимит — 10 МБ на файл.
+      </p>
+      {isPreparing ? <p style={{ color: "#4b5563", margin: 0 }}>Подготавливаем фото…</p> : null}
+      {compressionMessage ? <p style={{ color: "#4b5563", margin: 0 }}>{compressionMessage}</p> : null}
       {clientError ? <p style={{ color: "#b91c1c", margin: 0 }}>{clientError}</p> : null}
       {state.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{state.error}</p> : null}
       {state.message ? <p style={{ color: "#047857", margin: 0 }}>{state.message}</p> : null}
-      <button type="submit" disabled={isPending}>{isPending ? "Загрузка..." : "Загрузить фото"}</button>
+      <button type="submit" disabled={isBusy}>{isPreparing ? "Подготовка..." : isPending ? "Загрузка..." : "Загрузить фото"}</button>
     </form>
   );
 }
