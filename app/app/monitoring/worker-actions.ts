@@ -36,7 +36,7 @@ export type ProcessQueueState = {
   message?: string;
 };
 
-const OCR_BATCH_SIZE = 1;
+const OCR_BATCH_SIZE = 10;
 const MONITORING_PHOTOS_BUCKET = "monitoring-photos";
 
 export async function processQueuedRecognitionJobs(
@@ -133,7 +133,8 @@ export async function processQueuedRecognitionJobs(
 
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
-  return { message: `Распознавание: успешно ${processed}, ошибок ${failed}.` };
+  revalidatePath(`/app/monitoring/${sessionId}/review`);
+  return { message: `Обработана пачка: успешно ${processed}, ошибок ${failed}.` };
 }
 
 async function processOneRecognitionJob({
