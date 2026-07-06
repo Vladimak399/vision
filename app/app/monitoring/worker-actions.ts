@@ -1,11 +1,15 @@
 "use server";
 
+import { Buffer } from "node:buffer";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { getCurrentUser } from "../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
+import { recognizeShelfPhotoWithOpenAI } from "../../../server/shelf-recognition/openai";
+import type { ShelfRecognitionItem } from "../../../server/shelf-recognition/types";
 
 type QueueJobPayload = {
   photo_id?: string;
@@ -20,12 +24,19 @@ type QueueJobRow = {
   payload: QueueJobPayload;
 };
 
+type MonitoringPhotoRow = {
+  id: string;
+  storage_path: string;
+  status: string;
+};
+
 export type ProcessQueueState = {
   error?: string;
   message?: string;
 };
 
-const DRY_RUN_BATCH_SIZE = 5;
+const OCR_BATCH_SIZE = 1;
+const MONITORING_PHOTOS_BUCKET = "monitoring-photos";
 
 export async function processQueuedRecognitionJobs(
   _state: ProcessQueueState,
@@ -88,7 +99,7 @@ export async function processQueuedRecognitionJobs(
     .eq("status", "queued")
     .lte("run_after", new Date().toISOString())
     .order("created_at", { ascending: true })
-    .limit(DRY_RUN_BATCH_SIZE)
+    .limit(OCR_BATCH_SIZE)
     .returns<QueueJobRow[]>();
 
   if (jobsError) {
@@ -103,43 +114,96 @@ export async function processQueuedRecognitionJobs(
   let failed = 0;
 
   for (const job of jobs) {
-    const payload = job.payload;
-    const photoId = payload.photo_id;
+    const result = await processOneRecognitionJob({ companyId, sessionId, job, supabase });
 
-    if (!photoId || payload.company_id !== companyId || payload.session_id !== sessionId) {
-      await supabase
-        .from("jobs")
-        .update({ status: "failed", error: "Invalid job payload." })
-        .eq("company_id", companyId)
-        .eq("id", job.id);
+    if (result.ok) {
+      processed += 1;
+    } else {
       failed += 1;
-      continue;
     }
+  }
 
-    const { error: claimError } = await supabase
-      .from("jobs")
-      .update({ status: "running", attempts: job.attempts + 1, error: null })
-      .eq("company_id", companyId)
-      .eq("id", job.id)
-      .eq("status", "queued");
+  await moveSessionToReviewIfReady(supabase, companyId, sessionId);
 
-    if (claimError) {
-      failed += 1;
-      continue;
-    }
+  revalidatePath("/app/monitoring");
+  revalidatePath(`/app/monitoring/${sessionId}`);
+  return { message: `Распознавание: успешно ${processed}, ошибок ${failed}.` };
+}
 
-    const { error: photoProcessingError } = await supabase
-      .from("monitoring_photos")
-      .update({ status: "processing", error: null })
-      .eq("company_id", companyId)
-      .eq("session_id", sessionId)
-      .eq("id", photoId)
-      .eq("status", "queued");
+async function processOneRecognitionJob({
+  companyId,
+  sessionId,
+  job,
+  supabase,
+}: {
+  companyId: string;
+  sessionId: string;
+  job: QueueJobRow;
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+}) {
+  const photoId = job.payload.photo_id;
 
-    if (photoProcessingError) {
-      await markJobFailed(supabase, companyId, job.id, photoProcessingError.message);
-      failed += 1;
-      continue;
+  if (!photoId || job.payload.company_id !== companyId || job.payload.session_id !== sessionId) {
+    await markJobFailed(supabase, companyId, job.id, "Invalid job payload.");
+    return { ok: false };
+  }
+
+  const { data: photo, error: photoError } = await supabase
+    .from("monitoring_photos")
+    .select("id, storage_path, status")
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId)
+    .eq("id", photoId)
+    .maybeSingle()
+    .returns<MonitoringPhotoRow | null>();
+
+  if (photoError || !photo) {
+    const message = photoError?.message ?? "Photo not found for recognition job.";
+    await markJobFailed(supabase, companyId, job.id, message);
+    return { ok: false };
+  }
+
+  if (photo.status !== "queued") {
+    const message = `Photo is not queued. Current status: ${photo.status}.`;
+    await markJobFailed(supabase, companyId, job.id, message);
+    return { ok: false };
+  }
+
+  const { error: claimError } = await supabase
+    .from("jobs")
+    .update({ status: "running", attempts: job.attempts + 1, error: null })
+    .eq("company_id", companyId)
+    .eq("id", job.id)
+    .eq("status", "queued");
+
+  if (claimError) {
+    return { ok: false };
+  }
+
+  const { error: photoProcessingError } = await supabase
+    .from("monitoring_photos")
+    .update({ status: "processing", error: null })
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId)
+    .eq("id", photoId)
+    .eq("status", "queued");
+
+  if (photoProcessingError) {
+    await markJobFailed(supabase, companyId, job.id, photoProcessingError.message);
+    return { ok: false };
+  }
+
+  try {
+    const image = await loadPhotoAsBase64(supabase, photo.storage_path);
+    const recognition = await recognizeShelfPhotoWithOpenAI(image);
+    const rows = buildRecognizedItemRows({ companyId, sessionId, photoId, items: recognition.items });
+
+    if (rows.length > 0) {
+      const { error: insertError } = await supabase.from("recognized_items").insert(rows);
+
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
     }
 
     const { error: photoProcessedError } = await supabase
@@ -151,31 +215,134 @@ export async function processQueuedRecognitionJobs(
       .eq("status", "processing");
 
     if (photoProcessedError) {
-      await markJobFailed(supabase, companyId, job.id, photoProcessedError.message);
-      await supabase
-        .from("monitoring_photos")
-        .update({ status: "failed", error: photoProcessedError.message })
-        .eq("company_id", companyId)
-        .eq("session_id", sessionId)
-        .eq("id", photoId);
-      failed += 1;
-      continue;
+      throw new Error(photoProcessedError.message);
     }
 
     const { error: jobDoneError } = await supabase
       .from("jobs")
-      .update({ status: "succeeded", error: null })
+      .update({
+        status: "succeeded",
+        error: null,
+        model: recognition.usage.model,
+        input_tokens: recognition.usage.input_tokens,
+        output_tokens: recognition.usage.output_tokens,
+        estimated_cost_microusd: recognition.usage.estimated_cost_microusd,
+        duration_ms: recognition.usage.duration_ms,
+      })
       .eq("company_id", companyId)
       .eq("id", job.id);
 
     if (jobDoneError) {
-      failed += 1;
-      continue;
+      throw new Error(jobDoneError.message);
     }
 
-    processed += 1;
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Recognition failed.";
+    await markJobFailed(supabase, companyId, job.id, message);
+    await supabase
+      .from("monitoring_photos")
+      .update({ status: "failed", error: message })
+      .eq("company_id", companyId)
+      .eq("session_id", sessionId)
+      .eq("id", photoId);
+    return { ok: false };
+  }
+}
+
+async function loadPhotoAsBase64(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  storagePath: string,
+) {
+  const { data, error } = await supabase.storage.from(MONITORING_PHOTOS_BUCKET).download(storagePath);
+
+  if (error || !data) {
+    throw new Error(error?.message ?? "Photo download failed.");
   }
 
+  const arrayBuffer = await data.arrayBuffer();
+  const mimeType = data.type || inferMimeType(storagePath);
+
+  return {
+    imageBase64: Buffer.from(arrayBuffer).toString("base64"),
+    mimeType,
+  };
+}
+
+function buildRecognizedItemRows({
+  companyId,
+  sessionId,
+  photoId,
+  items,
+}: {
+  companyId: string;
+  sessionId: string;
+  photoId: string;
+  items: ShelfRecognitionItem[];
+}) {
+  return items.flatMap((item) => {
+    const rawName = firstNonEmpty([item.raw_name, item.price_tag_text, item.product_visible_text]);
+
+    if (!rawName) {
+      return [];
+    }
+
+    return [
+      {
+        company_id: companyId,
+        session_id: sessionId,
+        photo_id: photoId,
+        raw_name: rawName,
+        brand: item.brand,
+        size_text: item.size_text,
+        price_minor: item.price_minor,
+        currency: "RUB",
+        confidence: clampConfidence(Math.min(item.confidence, item.link_confidence)),
+        status: "needs_review",
+      },
+    ];
+  });
+}
+
+function firstNonEmpty(values: Array<string | null>) {
+  for (const value of values) {
+    const normalized = value?.trim();
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function clampConfidence(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function inferMimeType(path: string) {
+  const lowerPath = path.toLowerCase();
+
+  if (lowerPath.endsWith(".png")) {
+    return "image/png";
+  }
+
+  if (lowerPath.endsWith(".webp")) {
+    return "image/webp";
+  }
+
+  return "image/jpeg";
+}
+
+async function moveSessionToReviewIfReady(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  companyId: string,
+  sessionId: string,
+) {
   const { count: activePhotoCount } = await supabase
     .from("monitoring_photos")
     .select("id", { count: "exact", head: true })
@@ -191,10 +358,6 @@ export async function processQueuedRecognitionJobs(
       .eq("id", sessionId)
       .eq("status", "processing");
   }
-
-  revalidatePath("/app/monitoring");
-  revalidatePath(`/app/monitoring/${sessionId}`);
-  return { message: `Dry-run обработка: успешно ${processed}, ошибок ${failed}.` };
 }
 
 async function markJobFailed(
