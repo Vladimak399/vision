@@ -114,8 +114,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
     return NextResponse.json({ error: itemsError.message }, { status: 500 });
   }
 
-  const rows = (items ?? []).map((item) => buildExportRow(item));
   const workbook = XLSX.utils.book_new();
+  const rows = (items ?? []).map((item) => buildExportRow(item));
   const summarySheet = XLSX.utils.aoa_to_sheet([
     ["Параметр", "Значение"],
     ["Компания", membershipResult.membership.companyName],
@@ -124,16 +124,10 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["ID сессии", session.id],
     ["Статус сессии", session.status],
     ["Создана", formatDateTime(session.created_at)],
-    ["Строк в экспорте", String(rows.length)],
-    ["Сопоставлено", String(rows.filter((row) => row["Каталог товар"]).length)],
-    ["Не найдено в ассортименте", String(rows.filter((row) => row["Не найдено в ассортименте"] === "Да").length)],
-    ["Требует внимания", String(rows.filter((row) => row["Нужно внимание"] === "Да").length)],
+    ["Строк в экспорте", String(items?.length ?? 0)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
   ]);
   const itemsSheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": "Нет товаров для экспорта" }]);
-
-  applySheetWidths(summarySheet, [28, 48]);
-  applySheetWidths(itemsSheet, [18, 18, 28, 16, 16, 16, 14, 14, 14, 14, 16, 16, 16, 28, 18, 28, 18, 16, 16, 24, 30, 20, 18, 18, 18, 18, 18, 36]);
 
   XLSX.utils.book_append_sheet(workbook, summarySheet, "Сводка");
   XLSX.utils.book_append_sheet(workbook, itemsSheet, "Товары");
@@ -157,15 +151,15 @@ function buildExportRow(item: ExportItem) {
   const ownPrice = product?.own_price_minor ?? null;
   const diffMinor = competitorPrice !== null && ownPrice !== null ? competitorPrice - ownPrice : null;
   const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? diffMinor! / ownPrice : null;
-  const notFound = !product;
-  const needsAttention = notFound || item.status === "needs_review" || (diffPercent !== null && Math.abs(diffPercent) >= 0.05);
+  const notFound = item.status === "unmatched";
+  const needsAttention = notFound || item.status === "needs_review" || !product || (diffPercent !== null && Math.abs(diffPercent) >= 0.05);
 
   return {
     "Отдел": getDepartmentLabel(item.department),
     "Статус проверки": item.status,
     "Нужно внимание": needsAttention ? "Да" : "Нет",
     "Не найдено в ассортименте": notFound ? "Да" : "Нет",
-    "Комментарий": buildComment({ item, notFound, diffPercent }),
+    "Комментарий": buildComment({ item, productFound: Boolean(product), notFound, diffPercent }),
     "Каталог SKU": product?.external_sku ?? "",
     "Каталог товар": product?.name ?? "",
     "Каталог бренд": product?.brand ?? "",
@@ -198,9 +192,13 @@ function getEffectiveCompetitorPrice(item: ExportItem) {
   return item.promo_price_minor ?? item.price_minor;
 }
 
-function buildComment({ item, notFound, diffPercent }: { item: ExportItem; notFound: boolean; diffPercent: number | null }) {
+function buildComment({ item, productFound, notFound, diffPercent }: { item: ExportItem; productFound: boolean; notFound: boolean; diffPercent: number | null }) {
   if (notFound) {
-    return "Не найдено в ассортименте";
+    return "Подтверждено: не продаём / нет в ассортименте";
+  }
+
+  if (!productFound) {
+    return item.review_reason || "Нет уверенного совпадения с каталогом, проверить вручную";
   }
 
   if (item.status === "needs_review") {
@@ -257,8 +255,4 @@ function formatDateTime(value: string) {
 function buildFilename(storeName: string, sessionId: string) {
   const safeStore = storeName.toLowerCase().replace(/[^a-zа-я0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "monitoring";
   return `monitoring-${safeStore}-${sessionId.slice(0, 8)}.xlsx`;
-}
-
-function applySheetWidths(sheet: XLSX.WorkSheet, widths: number[]) {
-  sheet["!cols"] = widths.map((width) => ({ wch: width }));
 }
