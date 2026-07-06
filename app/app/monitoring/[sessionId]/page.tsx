@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
+import { ManualRecognizedItemForm } from "./manual-item-form";
 import { MonitoringPhotoUploadForm } from "./photo-upload-form";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,21 @@ type MonitoringPhoto = {
   storage_path: string;
   status: string;
   uploaded_at: string | null;
+};
+
+type RecognizedItem = {
+  id: string;
+  photo_id: string;
+  raw_name: string;
+  brand: string | null;
+  size_text: string | null;
+  price_minor: number | null;
+  currency: string;
+  status: string;
+  created_at: string;
+  monitoring_photos: {
+    storage_path: string;
+  } | null;
 };
 
 type PageProps = {
@@ -75,13 +91,28 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
     return <SessionNotFound />;
   }
 
+  const companyId = membershipResult.membership.companyId;
   const { data: photos, error: photosError } = await supabase
     .from("monitoring_photos")
     .select("id, storage_path, status, uploaded_at")
-    .eq("company_id", membershipResult.membership.companyId)
+    .eq("company_id", companyId)
     .eq("session_id", session.id)
     .order("uploaded_at", { ascending: false })
     .returns<MonitoringPhoto[]>();
+
+  const { data: recognizedItems, error: recognizedItemsError } = await supabase
+    .from("recognized_items")
+    .select("id, photo_id, raw_name, brand, size_text, price_minor, currency, status, created_at, monitoring_photos(storage_path)")
+    .eq("company_id", companyId)
+    .eq("session_id", session.id)
+    .order("created_at", { ascending: false })
+    .returns<RecognizedItem[]>();
+
+  const photoOptions = (photos ?? []).map((photo) => ({
+    id: photo.id,
+    label: getStorageFilename(photo.storage_path) || formatShortId(photo.id),
+  }));
+  const canCreateManualItems = ["admin", "manager"].includes(membershipResult.membership.role);
 
   return (
     <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 960, padding: "0 1rem" }}>
@@ -136,9 +167,59 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
           )}
         </div>
       </section>
+
+      {canCreateManualItems ? (
+        <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb", display: "grid", gap: "1rem" }}>
+          <h2 style={{ margin: 0 }}>Ручной ввод товара</h2>
+          <ManualRecognizedItemForm sessionId={session.id} photos={photoOptions} />
+        </section>
+      ) : null}
+
+      <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", display: "grid", gap: "1rem" }}>
+        <h2 style={{ margin: 0 }}>Распознанные товары</h2>
+        {recognizedItemsError ? (
+          <p style={{ color: "#b45309", margin: 0 }}>Не удалось загрузить товары: {recognizedItemsError.message}</p>
+        ) : recognizedItems && recognizedItems.length > 0 ? (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={cellStyle}>Товар</th>
+                  <th style={cellStyle}>Цена</th>
+                  <th style={cellStyle}>Бренд</th>
+                  <th style={cellStyle}>Размер</th>
+                  <th style={cellStyle}>Статус</th>
+                  <th style={cellStyle}>Создан</th>
+                  <th style={cellStyle}>Фото</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recognizedItems.map((item) => (
+                  <tr key={item.id}>
+                    <td style={cellStyle}>{item.raw_name}</td>
+                    <td style={cellStyle}>{formatPrice(item.price_minor, item.currency)}</td>
+                    <td style={cellStyle}>{item.brand || "—"}</td>
+                    <td style={cellStyle}>{item.size_text || "—"}</td>
+                    <td style={cellStyle}>{item.status}</td>
+                    <td style={cellStyle}>{formatDateTime(item.created_at)}</td>
+                    <td style={cellStyle}>{getStorageFilename(item.monitoring_photos?.storage_path ?? "") || formatShortId(item.photo_id)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: "0.25rem" }}>
+            <p style={{ fontWeight: 600, margin: 0 }}>Товары пока не внесены</p>
+            <p style={{ color: "#4b5563", margin: 0 }}>Добавьте товар вручную по загруженному фото</p>
+          </div>
+        )}
+      </section>
     </main>
   );
 }
+
+const cellStyle = { borderBottom: "1px solid #e5e7eb", padding: "0.5rem", textAlign: "left" as const };
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
@@ -187,6 +268,13 @@ function formatShortId(value: string) {
   return value.slice(0, 8);
 }
 
+function formatPrice(priceMinor: number | null, currency: string) {
+  if (priceMinor === null) {
+    return "—";
+  }
+
+  return `${(priceMinor / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+}
 
 function getStorageFilename(storagePath: string) {
   const segments = storagePath.split("/").filter(Boolean);
