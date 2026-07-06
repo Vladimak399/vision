@@ -51,12 +51,13 @@ function toCatalogProduct(row: CatalogProductRow): CatalogProduct {
   };
 }
 
-export async function getCatalogProducts(): Promise<CatalogProduct[]> {
+export async function getCatalogProducts(companyId: string): Promise<CatalogProduct[]> {
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
     .from("catalog_products")
     .select("*")
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .returns<CatalogProductRow[]>();
 

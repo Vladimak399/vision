@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { getCurrentUser } from "../../../server/auth";
+import { hasCompanyRole, roleList, STORE_WRITE_ROLES } from "../../../server/company-access";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
 
 export type StoreCreateState = {
@@ -27,6 +28,10 @@ export async function createStore(_state: StoreCreateState, formData: FormData):
 
   if (membershipResult.status !== "ok") {
     return { error: "Нет доступа к компании." };
+  }
+
+  if (!hasCompanyRole(membershipResult.membership, STORE_WRITE_ROLES)) {
+    return { error: `Недостаточно прав. Создавать магазины могут только ${roleList(STORE_WRITE_ROLES)}.` };
   }
 
   const name = String(formData.get("name") ?? "").trim();

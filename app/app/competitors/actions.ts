@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { getCurrentUser } from "../../../server/auth";
+import { COMPETITOR_WRITE_ROLES, hasCompanyRole, roleList } from "../../../server/company-access";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
 
 export type CompetitorCreateState = {
@@ -30,6 +31,10 @@ export async function createCompetitor(
 
   if (membershipResult.status !== "ok") {
     return { error: "Нет доступа к компании." };
+  }
+
+  if (!hasCompanyRole(membershipResult.membership, COMPETITOR_WRITE_ROLES)) {
+    return { error: `Недостаточно прав. Создавать конкурентов могут только ${roleList(COMPETITOR_WRITE_ROLES)}.` };
   }
 
   const name = String(formData.get("name") ?? "").trim();
