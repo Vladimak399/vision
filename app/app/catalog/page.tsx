@@ -1,3 +1,4 @@
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -50,6 +51,23 @@ export default async function CatalogPage() {
         </Link>
       </div>
 
++      <div style={{ marginTop: "0.5rem" }}>
++        <Link
++          href="/app/catalog/import"
++          style={{
++            display: "inline-block",
++            padding: "0.5rem 0.75rem",
++            background: "#eef2ff",
++            color: "#4338ca",
++            borderRadius: 8,
++            textDecoration: "none",
++            marginRight: "0.75rem",
++          }}
++        >
++          Импорт каталога
++        </Link>
++      </div>
++
       <div>
         <p style={{ margin: 0, textTransform: "uppercase", fontSize: "0.875rem", color: "#64748b" }}>
           PriceVision
