@@ -11,6 +11,7 @@ export function ProcessQueueForm({ sessionId }: { sessionId: string }) {
   const reviewHref = `/app/monitoring/${sessionId}/review`;
   const progressHref = `/app/monitoring/${sessionId}/departments`;
   const exportHref = `/app/monitoring/${sessionId}/export.xlsx`;
+  const detailedExportHref = `/app/monitoring/${sessionId}/export-detailed.xlsx`;
 
   return (
     <div style={{ display: "grid", gap: "0.5rem" }}>
@@ -27,6 +28,7 @@ export function ProcessQueueForm({ sessionId }: { sessionId: string }) {
         <a href={reviewHref}>Проверить товары</a>
         <a href={progressHref}>Прогресс по отделам</a>
         <a href={exportHref}>Экспорт XLSX</a>
+        <a href={detailedExportHref}>Экспорт по листам</a>
       </div>
     </div>
   );
