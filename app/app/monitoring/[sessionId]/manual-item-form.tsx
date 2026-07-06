@@ -17,7 +17,7 @@ export function ManualRecognizedItemForm({ sessionId, photos }: { sessionId: str
   if (photos.length === 0) {
     return (
       <p style={{ color: "#4b5563", margin: 0 }}>
-        Сначала загрузите фото, потом можно будет внести товары и цены
+        Сначала загрузите фото. Ручное добавление понадобится только как запасной вариант, если AI не распознает товар или потребуется корректировка.
       </p>
     );
   }
@@ -61,10 +61,10 @@ export function ManualRecognizedItemForm({ sessionId, photos }: { sessionId: str
         <input name="size_text" maxLength={160} placeholder="500 г" disabled={isPending} />
       </label>
 
-      <p style={{ color: "#4b5563", margin: 0 }}>Валюта: RUB</p>
+      <p style={{ color: "#4b5563", margin: 0 }}>Заполняйте вручную только для fallback-коррекции. Валюта: RUB.</p>
       {state.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{state.error}</p> : null}
       {state.message ? <p style={{ color: "#047857", margin: 0 }}>{state.message}</p> : null}
-      <button type="submit" disabled={isPending}>{isPending ? "Сохранение..." : "Добавить товар"}</button>
+      <button type="submit" disabled={isPending}>{isPending ? "Сохранение..." : "Добавить вручную"}</button>
     </form>
   );
 }
