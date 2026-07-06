@@ -6,6 +6,7 @@ import { getCurrentUser } from "../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 import { ManualRecognizedItemForm } from "./manual-item-form";
 import { MonitoringPhotoUploadForm } from "./photo-upload-form";
+import { ProcessQueueForm } from "./process-queue-form";
 import { QueueRecognitionForm } from "./queue-recognition-form";
 
 export const dynamic = "force-dynamic";
@@ -159,6 +160,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
               ))}
             </div>
             <QueueRecognitionForm sessionId={session.id} disabled={queueablePhotoCount === 0} />
+            <ProcessQueueForm sessionId={session.id} />
           </div>
         ) : null}
         <div>
