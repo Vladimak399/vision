@@ -2,9 +2,9 @@
 
 import { useActionState } from "react";
 
-import { recoverStaleOcrWork } from "./recovery-actions";
+import { recoverStaleOcrWork, type RecoveryState } from "./recovery-actions";
 
-const initialState = {};
+const initialState: RecoveryState = {};
 
 export function RecoveryForm({ sessionId }: { sessionId: string }) {
   const [state, formAction, isPending] = useActionState(recoverStaleOcrWork, initialState);
