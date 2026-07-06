@@ -37,6 +37,8 @@ export default async function AppPage() {
         <nav aria-label="Разделы справочников" style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "1rem" }}>
           <Link href="/app/stores">Магазины</Link>
           <Link href="/app/competitors">Конкуренты</Link>
+          <Link href="/app/catalog">Каталог</Link>
+          <Link href="/app/monitoring">Мониторинг</Link>
         </nav>
       </div>
 
