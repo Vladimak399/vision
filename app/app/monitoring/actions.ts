@@ -25,6 +25,15 @@ type QueueablePhotoRow = {
   status: "uploaded" | "failed";
 };
 
+type MonitoringDepartment = "products" | "chemistry";
+
+type ManualPhotoDepartmentRow = {
+  id: string;
+  department: MonitoringDepartment | null;
+};
+
+const MONITORING_DEPARTMENTS = new Set<MonitoringDepartment>(["products", "chemistry"]);
+
 export async function createMonitoringSession(
   _state: MonitoringSessionCreateState,
   formData: FormData,
@@ -102,6 +111,7 @@ export async function uploadMonitoringPhotos(
 ): Promise<MonitoringPhotoUploadState> {
   const user = await getCurrentUser();
   const sessionId = String(formData.get("session_id") ?? "").trim();
+  const department = parseMonitoringDepartment(formData.get("department"));
   const nextPath = sessionId ? `/app/monitoring/${encodeURIComponent(sessionId)}` : "/app/monitoring";
 
   if (!user) {
@@ -125,6 +135,10 @@ export async function uploadMonitoringPhotos(
 
   if (!sessionId) {
     return { error: "Не указана сессия мониторинга." };
+  }
+
+  if (!department) {
+    return { error: "Выберите отдел для загружаемых фото." };
   }
 
   const companyId = membershipResult.membership.companyId;
@@ -203,6 +217,7 @@ export async function uploadMonitoringPhotos(
       storage_path: storagePath,
       sha256,
       status: "uploaded",
+      department,
     });
 
     if (insertError) {
@@ -215,7 +230,7 @@ export async function uploadMonitoringPhotos(
 
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
-  return { message: `Загружено фото: ${uploadedCount}. Статус сессии обновлён.` };
+  return { message: `Загружено фото: ${uploadedCount}. Отдел: ${getDepartmentLabel(department)}.` };
 }
 
 export type QueueRecognitionState = {
@@ -454,11 +469,12 @@ export async function createManualRecognizedItem(
 
   const { data: photo, error: photoError } = await supabase
     .from("monitoring_photos")
-    .select("id")
+    .select("id, department")
     .eq("company_id", companyId)
     .eq("session_id", sessionId)
     .eq("id", photoId)
-    .maybeSingle();
+    .maybeSingle()
+    .returns<ManualPhotoDepartmentRow | null>();
 
   if (photoError) {
     return { error: `Не удалось проверить фото: ${photoError.message}` };
@@ -479,6 +495,7 @@ export async function createManualRecognizedItem(
     currency: "RUB",
     confidence: 1.0,
     status: "needs_review",
+    department: photo.department,
   });
 
   if (insertError) {
@@ -514,6 +531,16 @@ function parseRubPriceToMinor(value: string) {
   }
 
   return minor;
+}
+
+function parseMonitoringDepartment(value: FormDataEntryValue | null) {
+  const department = String(value ?? "").trim();
+
+  return MONITORING_DEPARTMENTS.has(department as MonitoringDepartment) ? (department as MonitoringDepartment) : null;
+}
+
+function getDepartmentLabel(department: MonitoringDepartment) {
+  return department === "products" ? "Продукты" : "Химия";
 }
 
 function calculateSha256(bytes: Buffer) {
