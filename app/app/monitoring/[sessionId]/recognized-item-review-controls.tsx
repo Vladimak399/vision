@@ -17,6 +17,8 @@ type Props = {
   };
 };
 
+type ReviewStatus = "needs_review" | "confirmed" | "rejected" | "unmatched";
+
 const fieldStyle = { width: "100%", minWidth: 180, padding: "0.35rem", border: "1px solid #d1d5db", borderRadius: 6 } as const;
 
 export function RecognizedItemReviewControls({ sessionId, item }: Props) {
@@ -26,6 +28,7 @@ export function RecognizedItemReviewControls({ sessionId, item }: Props) {
         <StatusForm sessionId={sessionId} itemId={item.id} status="confirmed" label="OK" />
         <StatusForm sessionId={sessionId} itemId={item.id} status="rejected" label="Нет" />
         <StatusForm sessionId={sessionId} itemId={item.id} status="needs_review" label="Проверить" />
+        <StatusForm sessionId={sessionId} itemId={item.id} status="unmatched" label="Нет в ассортименте" />
       </div>
 
       <details>
@@ -50,7 +53,7 @@ export function RecognizedItemReviewControls({ sessionId, item }: Props) {
   );
 }
 
-function StatusForm({ sessionId, itemId, status, label }: { sessionId: string; itemId: string; status: "needs_review" | "confirmed" | "rejected"; label: string }) {
+function StatusForm({ sessionId, itemId, status, label }: { sessionId: string; itemId: string; status: ReviewStatus; label: string }) {
   return (
     <form action={updateRecognizedItemStatus}>
       <input type="hidden" name="session_id" value={sessionId} />
