@@ -127,15 +127,15 @@ function buildExportRow(item: ExportItem) {
   const ownPrice = product?.own_price_minor ?? null;
   const diffMinor = competitorPrice !== null && ownPrice !== null ? competitorPrice - ownPrice : null;
   const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? diffMinor! / ownPrice : null;
-  const notFound = !product;
-  const needsAttention = notFound || item.status === "needs_review" || (diffPercent !== null && Math.abs(diffPercent) >= 0.05);
+  const notFound = item.status === "unmatched";
+  const needsAttention = notFound || item.status === "needs_review" || !product || (diffPercent !== null && Math.abs(diffPercent) >= 0.05);
 
   return {
     "Отдел": item.department === "products" ? "Продукты" : item.department === "chemistry" ? "Химия" : "Без отдела",
     "Статус проверки": item.status,
     "Нужно внимание": needsAttention ? "Да" : "Нет",
     "Не найдено в ассортименте": notFound ? "Да" : "Нет",
-    "Комментарий": buildComment(item, notFound, diffPercent),
+    "Комментарий": buildComment(item, Boolean(product), notFound, diffPercent),
     "Каталог SKU": product?.external_sku ?? "",
     "Каталог товар": product?.name ?? "",
     "Каталог бренд": product?.brand ?? "",
@@ -178,8 +178,9 @@ function reviewRows(rows: ExportRow[]) {
   return rows.filter((row) => row["Нужно внимание"] === "Да" || row["Статус проверки"] === "needs_review");
 }
 
-function buildComment(item: ExportItem, notFound: boolean, diffPercent: number | null) {
-  if (notFound) return "Не найдено в ассортименте";
+function buildComment(item: ExportItem, productFound: boolean, notFound: boolean, diffPercent: number | null) {
+  if (notFound) return "Подтверждено: не продаём / нет в ассортименте";
+  if (!productFound) return item.review_reason || "Нет уверенного совпадения с каталогом, проверить вручную";
   if (item.status === "needs_review") return item.review_reason || "Нужно проверить вручную";
   if (diffPercent !== null && diffPercent <= -0.05) return "Конкурент дешевле нашей цены на 5%+";
   if (diffPercent !== null && diffPercent >= 0.05) return "Конкурент дороже нашей цены на 5%+";
