@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "../lib/supabase/server";
+import { CATALOG_WRITE_ROLES, hasCompanyRole, roleList } from "./company-access";
 import { getPrimaryCompanyMembership } from "./primary-membership";
 
 export type CatalogProduct = {
@@ -33,6 +34,22 @@ type CatalogProductRow = {
   updated_by: string | null;
 };
 
+const catalogProductColumns = [
+  "id",
+  "company_id",
+  "external_sku",
+  "name",
+  "brand",
+  "size_text",
+  "own_price_minor",
+  "currency",
+  "is_active",
+  "created_at",
+  "updated_at",
+  "created_by",
+  "updated_by",
+].join(", ");
+
 function toCatalogProduct(row: CatalogProductRow): CatalogProduct {
   return {
     id: row.id,
@@ -51,12 +68,13 @@ function toCatalogProduct(row: CatalogProductRow): CatalogProduct {
   };
 }
 
-export async function getCatalogProducts(): Promise<CatalogProduct[]> {
+export async function getCatalogProducts(companyId: string): Promise<CatalogProduct[]> {
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
     .from("catalog_products")
-    .select("*")
+    .select(catalogProductColumns)
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .returns<CatalogProductRow[]>();
 
@@ -84,6 +102,10 @@ export async function createCatalogProduct(
     throw new Error("User company membership was not found");
   }
 
+  if (!hasCompanyRole(membershipResult.membership, CATALOG_WRITE_ROLES)) {
+    throw new Error(`Недостаточно прав. Управлять каталогом могут только ${roleList(CATALOG_WRITE_ROLES)}.`);
+  }
+
   const companyId = membershipResult.membership.companyId;
   const brand = options.brand ?? null;
   const sizeText = options.sizeText ?? null;
@@ -102,7 +124,7 @@ export async function createCatalogProduct(
       currency,
       is_active: true,
     })
-    .select("*")
+    .select(catalogProductColumns)
     .single();
 
   if (error) {
