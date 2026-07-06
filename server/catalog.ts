@@ -43,10 +43,10 @@ export async function getCatalogProducts(): Promise<CatalogProduct[]> {
     .returns<CatalogProductRow[]>();
 
   if (error) {
-    throw new Error(`Не удалось получить товары из каталога: ${error.message}`);
+    throw new Error(`Failed to load catalog products: ${error.message}`);
   }
 
-  return data.map((product) => ({
+  return (data ?? []).map((product) => ({
     id: product.id,
     companyId: product.company_id,
     externalSku: product.external_sku,
@@ -71,14 +71,13 @@ export async function createCatalogProduct(
     sizeText?: string | null;
     ownPriceMinor?: bigint | null;
     currency?: string;
-  } = {}
+  } = {},
 ): Promise<CatalogProduct> {
   const supabase = await createSupabaseServerClient();
 
-  // Get current user's primary membership
   const membershipResult = await getPrimaryCompanyMembership();
   if (membershipResult.status !== "ok" || !membershipResult.membership) {
-    throw new Error("Не удалось определить компанию пользователя");
+    throw new Error("User company membership was not found");
   }
 
   const companyId = membershipResult.membership.companyId;
@@ -104,7 +103,11 @@ export async function createCatalogProduct(
     .returns<CatalogProductRow>();
 
   if (error) {
-    throw new Error(`Не удалось создать товар: ${error.message}`);
+    throw new Error(`Failed to create catalog product: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error("Created catalog product was not returned by the database");
   }
 
   return {
