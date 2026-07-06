@@ -60,7 +60,7 @@ type ExportItem = {
   matches: ExportMatch[] | null;
 };
 
-const EXPORT_STATUSES = ["matched", "confirmed"];
+const EXPORT_STATUSES = ["matched", "confirmed", "unmatched", "needs_review"];
 
 export async function GET(_request: Request, { params }: RouteContext) {
   const { sessionId } = await params;
@@ -114,6 +114,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     return NextResponse.json({ error: itemsError.message }, { status: 500 });
   }
 
+  const rows = (items ?? []).map((item) => buildExportRow(item));
   const workbook = XLSX.utils.book_new();
   const summarySheet = XLSX.utils.aoa_to_sheet([
     ["Параметр", "Значение"],
@@ -123,42 +124,16 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["ID сессии", session.id],
     ["Статус сессии", session.status],
     ["Создана", formatDateTime(session.created_at)],
-    ["Строк в экспорте", String(items?.length ?? 0)],
+    ["Строк в экспорте", String(rows.length)],
+    ["Сопоставлено", String(rows.filter((row) => row["Каталог товар"]).length)],
+    ["Не найдено в ассортименте", String(rows.filter((row) => row["Не найдено в ассортименте"] === "Да").length)],
+    ["Требует внимания", String(rows.filter((row) => row["Нужно внимание"] === "Да").length)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
   ]);
+  const itemsSheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": "Нет товаров для экспорта" }]);
 
-  const rows = (items ?? []).map((item) => {
-    const activeMatch = getActiveMatch(item.matches);
-    const product = activeMatch?.catalog_products ?? null;
-
-    return {
-      "Отдел": getDepartmentLabel(item.department),
-      "Статус проверки": item.status,
-      "Товар с фото": item.raw_name,
-      "Цена конкурента": formatMoney(item.price_minor),
-      "Старая цена": formatMoney(item.old_price_minor),
-      "Акционная цена": formatMoney(item.promo_price_minor),
-      "Валюта": item.currency ?? "RUB",
-      "Бренд с фото": item.brand ?? "",
-      "Размер с фото": item.size_text ?? "",
-      "Текст ценника": item.price_tag_text ?? "",
-      "Текст товара": item.product_visible_text ?? "",
-      "Место на фото": item.position_hint ?? "",
-      "Причина проверки": item.review_reason ?? "",
-      "Уверенность OCR": formatPercent(item.confidence),
-      "Уверенность связи": formatPercent(item.link_confidence),
-      "Каталог SKU": product?.external_sku ?? "",
-      "Каталог товар": product?.name ?? "",
-      "Каталог бренд": product?.brand ?? "",
-      "Каталог размер": product?.size_text ?? "",
-      "Наша цена": formatMoney(product?.own_price_minor ?? null),
-      "Match decision": activeMatch?.decision ?? "",
-      "Match score": activeMatch ? formatPercent(activeMatch.score) : "",
-      "Создано": formatDateTime(item.created_at),
-      "ID recognized_item": item.id,
-    };
-  });
-  const itemsSheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": "Нет matched/confirmed товаров для экспорта" }]);
+  applySheetWidths(summarySheet, [28, 48]);
+  applySheetWidths(itemsSheet, [18, 18, 28, 16, 16, 16, 14, 14, 14, 14, 16, 16, 16, 28, 18, 28, 18, 16, 16, 24, 30, 20, 18, 18, 18, 18, 18, 36]);
 
   XLSX.utils.book_append_sheet(workbook, summarySheet, "Сводка");
   XLSX.utils.book_append_sheet(workbook, itemsSheet, "Товары");
@@ -173,6 +148,74 @@ export async function GET(_request: Request, { params }: RouteContext) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function buildExportRow(item: ExportItem) {
+  const activeMatch = getActiveMatch(item.matches);
+  const product = activeMatch?.catalog_products ?? null;
+  const competitorPrice = getEffectiveCompetitorPrice(item);
+  const ownPrice = product?.own_price_minor ?? null;
+  const diffMinor = competitorPrice !== null && ownPrice !== null ? competitorPrice - ownPrice : null;
+  const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? diffMinor! / ownPrice : null;
+  const notFound = !product;
+  const needsAttention = notFound || item.status === "needs_review" || (diffPercent !== null && Math.abs(diffPercent) >= 0.05);
+
+  return {
+    "Отдел": getDepartmentLabel(item.department),
+    "Статус проверки": item.status,
+    "Нужно внимание": needsAttention ? "Да" : "Нет",
+    "Не найдено в ассортименте": notFound ? "Да" : "Нет",
+    "Комментарий": buildComment({ item, notFound, diffPercent }),
+    "Каталог SKU": product?.external_sku ?? "",
+    "Каталог товар": product?.name ?? "",
+    "Каталог бренд": product?.brand ?? "",
+    "Каталог размер": product?.size_text ?? "",
+    "Товар с фото": item.raw_name,
+    "Бренд с фото": item.brand ?? "",
+    "Размер с фото": item.size_text ?? "",
+    "Наша цена": formatMoney(ownPrice),
+    "Цена конкурента итоговая": formatMoney(competitorPrice),
+    "Цена конкурента обычная": formatMoney(item.price_minor),
+    "Старая цена конкурента": formatMoney(item.old_price_minor),
+    "Акционная цена конкурента": formatMoney(item.promo_price_minor),
+    "Разница конкурент-наша": formatMoney(diffMinor),
+    "Разница %": formatPercent(diffPercent),
+    "Валюта": item.currency ?? product?.currency ?? "RUB",
+    "Текст ценника": item.price_tag_text ?? "",
+    "Текст товара": item.product_visible_text ?? "",
+    "Место на фото": item.position_hint ?? "",
+    "Причина проверки": item.review_reason ?? "",
+    "Уверенность OCR": formatPercent(item.confidence),
+    "Уверенность связи": formatPercent(item.link_confidence),
+    "Match decision": activeMatch?.decision ?? "",
+    "Match score": activeMatch ? formatPercent(activeMatch.score) : "",
+    "Создано": formatDateTime(item.created_at),
+    "ID recognized_item": item.id,
+  };
+}
+
+function getEffectiveCompetitorPrice(item: ExportItem) {
+  return item.promo_price_minor ?? item.price_minor;
+}
+
+function buildComment({ item, notFound, diffPercent }: { item: ExportItem; notFound: boolean; diffPercent: number | null }) {
+  if (notFound) {
+    return "Не найдено в ассортименте";
+  }
+
+  if (item.status === "needs_review") {
+    return item.review_reason || "Нужно проверить вручную";
+  }
+
+  if (diffPercent !== null && diffPercent <= -0.05) {
+    return "Конкурент дешевле нашей цены на 5%+";
+  }
+
+  if (diffPercent !== null && diffPercent >= 0.05) {
+    return "Конкурент дороже нашей цены на 5%+";
+  }
+
+  return "";
 }
 
 function getActiveMatch(matches: ExportMatch[] | null) {
@@ -204,7 +247,7 @@ function formatPercent(value: number | null) {
     return "";
   }
 
-  return `${Math.round(value * 100)}%`;
+  return `${Math.round(value * 1000) / 10}%`;
 }
 
 function formatDateTime(value: string) {
@@ -214,4 +257,8 @@ function formatDateTime(value: string) {
 function buildFilename(storeName: string, sessionId: string) {
   const safeStore = storeName.toLowerCase().replace(/[^a-zа-я0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "monitoring";
   return `monitoring-${safeStore}-${sessionId.slice(0, 8)}.xlsx`;
+}
+
+function applySheetWidths(sheet: XLSX.WorkSheet, widths: number[]) {
+  sheet["!cols"] = widths.map((width) => ({ wch: width }));
 }
