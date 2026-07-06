@@ -36,7 +36,7 @@ export type ShelfRecognitionUsage = {
   model: string;
   input_tokens: number;
   output_tokens: number;
-  estimated_cost_microusd: number;
+  estimated_cost_microusd: number | null;
   duration_ms: number;
 };
 
