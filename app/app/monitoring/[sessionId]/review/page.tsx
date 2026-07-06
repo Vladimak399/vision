@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "../../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../../server/primary-membership";
+import { MatchControls } from "../match-controls";
 import { RecognizedItemReviewControls } from "../recognized-item-review-controls";
 
 type ReviewDepartmentFilter = "all" | "products" | "chemistry" | "none";
@@ -153,6 +154,8 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
           ))}
         </div>
       </header>
+
+      <MatchControls sessionId={sessionId} department={departmentFilter} />
 
       {items && items.length > 0 ? (
         <div style={{ display: "grid", gap: "0.75rem" }}>
