@@ -26,7 +26,8 @@ export default async function AppPage() {
     membershipError = error instanceof Error ? error.message : "Не удалось получить доступы к компаниям.";
   }
 
-  const primaryMembership = memberships[0];
+  const currentMembership = memberships[0];
+  const hasMultipleCompanies = memberships.length > 1;
 
   return (
     <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 960, padding: "0 1rem" }}>
@@ -54,9 +55,9 @@ export default async function AppPage() {
             companies.
           </p>
         </section>
-      ) : primaryMembership ? (
+      ) : currentMembership ? (
         <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem" }}>
-          <h2 style={{ marginTop: 0 }}>Доступ к компании</h2>
+          <h2 style={{ marginTop: 0 }}>Текущая компания</h2>
           <dl style={{ display: "grid", gap: "0.75rem", margin: 0 }}>
             <div>
               <dt style={{ color: "#6b7280" }}>Email</dt>
@@ -64,13 +65,19 @@ export default async function AppPage() {
             </div>
             <div>
               <dt style={{ color: "#6b7280" }}>Компания</dt>
-              <dd style={{ margin: 0 }}>{primaryMembership.companyName}</dd>
+              <dd style={{ margin: 0 }}>{currentMembership.companyName}</dd>
             </div>
             <div>
               <dt style={{ color: "#6b7280" }}>Роль</dt>
-              <dd style={{ margin: 0 }}>{primaryMembership.role}</dd>
+              <dd style={{ margin: 0 }}>{currentMembership.role}</dd>
             </div>
           </dl>
+          {hasMultipleCompanies ? (
+            <p style={{ marginBottom: 0, marginTop: "1rem", color: "#92400e" }}>
+              У пользователя есть доступ к нескольким компаниям. Сейчас приложение работает только с первой компанией в
+              списке доступов. Переключатель компаний будет отдельным шагом.
+            </p>
+          ) : null}
         </section>
       ) : (
         <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb" }}>
