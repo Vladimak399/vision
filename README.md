@@ -17,6 +17,10 @@ npm run build
 
 Environment variables are listed in `.env.example`.
 
+## Deployment
+
+Production deployment is handled by Vercel from the `main` branch.
+
 ## Документация
 
 1. [Vision](docs/01-vision.md)
