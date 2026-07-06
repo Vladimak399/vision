@@ -190,14 +190,12 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
 
     for (const file of files) {
       if (UNSUPPORTED_IPHONE_TYPES.has(file.type)) {
-        setClientError(
-          `Файл ${file.name || "без названия"} имеет неподдерживаемый формат HEIC/HEIF. Выберите JPEG, PNG или WebP.`,
-        );
+        setClientError(`Файл ${file.name || "без названия"} имеет неподдерживаемый формат HEIC/HEIF.`);
         return;
       }
 
       if (!ALLOWED_PHOTO_TYPES.has(file.type)) {
-        setClientError(`Файл ${file.name || "без названия"} имеет неподдерживаемый тип. Разрешены JPEG, PNG и WebP.`);
+        setClientError(`Файл ${file.name || "без названия"} имеет неподдерживаемый тип.`);
         return;
       }
     }
@@ -210,28 +208,23 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
       const oversizedPhoto = preparedPhotos.find((photo) => photo.file.size > MAX_PHOTO_SIZE_BYTES);
 
       if (oversizedPhoto) {
-        setClientError(
-          `Файл ${oversizedPhoto.file.name || "без названия"} после подготовки больше 10 МБ. Попробуйте выбрать другое фото или уменьшить размер.`,
-        );
+        setClientError(`Файл ${oversizedPhoto.file.name || "без названия"} после подготовки больше 10 МБ.`);
         setCompressionMessage(null);
         return;
       }
 
       const compressedPhotos = preparedPhotos.filter((photo) => photo.compressed);
       const batches = getPreparedPhotosBatches(preparedPhotos);
-      const batchText = batches.length > 1 ? ` Отправляем ${batches.length} пачками, чтобы не упереться в лимит запроса.` : "";
+      const batchText = batches.length > 1 ? ` Отправляем ${batches.length} пачками.` : "";
 
       if (compressedPhotos.length > 0) {
         setCompressionMessage(
           `${compressedPhotos
-            .map(
-              (photo) =>
-                `${photo.file.name}: ${formatFileSize(photo.originalSize)} → ${formatFileSize(photo.file.size)}`,
-            )
+            .map((photo) => `${photo.file.name}: ${formatFileSize(photo.originalSize)} → ${formatFileSize(photo.file.size)}`)
             .join("; ")}.${batchText}`,
         );
       } else {
-        setCompressionMessage(`Фото уже подходят по размеру, загружаем без сжатия.${batchText}`);
+        setCompressionMessage(`Фото уже подходят по размеру.${batchText}`);
       }
 
       startTransition(() => {
@@ -240,7 +233,7 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
         }
       });
     } catch {
-      setClientError("Не удалось подготовить фото. Попробуйте выбрать другое фото или уменьшить размер.");
+      setClientError("Не удалось подготовить фото.");
       setCompressionMessage(null);
     } finally {
       setIsPreparing(false);
@@ -250,6 +243,13 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
   return (
     <form action={formAction} onSubmit={handleSubmit} style={{ display: "grid", gap: "0.75rem" }}>
       <input type="hidden" name="session_id" value={sessionId} />
+      <label style={{ display: "grid", gap: "0.25rem" }}>
+        <span>Отдел</span>
+        <select name="department" required disabled={isBusy} defaultValue="products">
+          <option value="products">Продукты</option>
+          <option value="chemistry">Химия</option>
+        </select>
+      </label>
       <label style={{ display: "grid", gap: "0.25rem" }}>
         <span>Загрузить фото</span>
         <input
@@ -261,9 +261,7 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
           disabled={isBusy}
         />
       </label>
-      <p style={{ color: "#4b5563", margin: 0 }}>
-        JPEG, PNG или WebP. Можно выбрать много файлов сразу: приложение само сожмёт фото и отправит их безопасными пачками.
-      </p>
+      <p style={{ color: "#4b5563", margin: 0 }}>Выбери отдел и загрузи пачку фото. Для другого отдела загрузи отдельную пачку.</p>
       {isPreparing ? <p style={{ color: "#4b5563", margin: 0 }}>Подготавливаем фото…</p> : null}
       {compressionMessage ? <p style={{ color: "#4b5563", margin: 0 }}>{compressionMessage}</p> : null}
       {clientError ? <p style={{ color: "#b91c1c", margin: 0 }}>{clientError}</p> : null}
