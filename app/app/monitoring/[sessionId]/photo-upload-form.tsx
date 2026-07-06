@@ -6,6 +6,7 @@ import { uploadMonitoringPhotos, type MonitoringPhotoUploadState } from "../acti
 
 const initialState: MonitoringPhotoUploadState = {};
 const MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_BATCH_BYTES = 9 * 1024 * 1024;
 const COMPRESSION_TARGET_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_LONG_SIDE = 2400;
 const JPEG_QUALITY_STEPS = [0.9, 0.86, 0.82] as const;
@@ -26,6 +27,31 @@ function formatFileSize(size: number) {
 function getPreparedFileName(file: File) {
   const baseName = file.name.replace(/\.[^.]+$/, "") || "photo";
   return `${baseName}.jpg`;
+}
+
+function getPreparedPhotosBatches(photos: PreparedPhoto[]) {
+  const batches: PreparedPhoto[][] = [];
+  let currentBatch: PreparedPhoto[] = [];
+  let currentBatchSize = 0;
+
+  for (const photo of photos) {
+    const photoSize = photo.file.size;
+
+    if (currentBatch.length > 0 && currentBatchSize + photoSize > MAX_UPLOAD_BATCH_BYTES) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchSize = 0;
+    }
+
+    currentBatch.push(photo);
+    currentBatchSize += photoSize;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
 }
 
 async function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number) {
@@ -125,6 +151,17 @@ async function preparePhoto(file: File): Promise<PreparedPhoto> {
   return { file: compressedFile, originalSize: file.size, compressed: true };
 }
 
+function createBatchFormData(form: HTMLFormElement, batch: PreparedPhoto[]) {
+  const batchFormData = new FormData(form);
+  batchFormData.delete("photos");
+
+  for (const photo of batch) {
+    batchFormData.append("photos", photo.file, photo.file.name);
+  }
+
+  return batchFormData;
+}
+
 export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) {
   const [state, formAction, isPending] = useActionState(uploadMonitoringPhotos, initialState);
   const [clientError, setClientError] = useState<string | null>(null);
@@ -181,29 +218,26 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
       }
 
       const compressedPhotos = preparedPhotos.filter((photo) => photo.compressed);
+      const batches = getPreparedPhotosBatches(preparedPhotos);
+      const batchText = batches.length > 1 ? ` Отправляем ${batches.length} пачками, чтобы не упереться в лимит запроса.` : "";
 
       if (compressedPhotos.length > 0) {
         setCompressionMessage(
-          compressedPhotos
+          `${compressedPhotos
             .map(
               (photo) =>
                 `${photo.file.name}: ${formatFileSize(photo.originalSize)} → ${formatFileSize(photo.file.size)}`,
             )
-            .join("; "),
+            .join("; ")}.${batchText}`,
         );
       } else {
-        setCompressionMessage("Фото уже подходят по размеру, загружаем без сжатия.");
-      }
-
-      const preparedFormData = new FormData(form);
-      preparedFormData.delete("photos");
-
-      for (const photo of preparedPhotos) {
-        preparedFormData.append("photos", photo.file, photo.file.name);
+        setCompressionMessage(`Фото уже подходят по размеру, загружаем без сжатия.${batchText}`);
       }
 
       startTransition(() => {
-        formAction(preparedFormData);
+        for (const batch of batches) {
+          formAction(createBatchFormData(form, batch));
+        }
       });
     } catch {
       setClientError("Не удалось подготовить фото. Попробуйте выбрать другое фото или уменьшить размер.");
@@ -228,7 +262,7 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
         />
       </label>
       <p style={{ color: "#4b5563", margin: 0 }}>
-        JPEG, PNG или WebP. Большие фото будут бережно сжаты перед загрузкой; серверный лимит — 10 МБ на файл.
+        JPEG, PNG или WebP. Можно выбрать много файлов сразу: приложение само сожмёт фото и отправит их безопасными пачками.
       </p>
       {isPreparing ? <p style={{ color: "#4b5563", margin: 0 }}>Подготавливаем фото…</p> : null}
       {compressionMessage ? <p style={{ color: "#4b5563", margin: 0 }}>{compressionMessage}</p> : null}
