@@ -321,21 +321,26 @@ export async function queueRecognitionForSession(
     return { error: `Не удалось обновить статусы фото: ${photoUpdateError.message}` };
   }
 
-  const { error: jobsError } = await supabase.from("jobs").insert(
-    photos.map((photo) => ({
+  const jobs = photos.map((photo) => ({
+    company_id: companyId,
+    session_id: sessionId,
+    kind: "photo_ocr",
+    status: "queued",
+    payload: {
+      photo_id: photo.id,
+      storage_path: photo.storage_path,
       company_id: companyId,
       session_id: sessionId,
-      kind: "photo_ocr",
-      status: "queued",
-      payload: {
-        photo_id: photo.id,
-        storage_path: photo.storage_path,
-        company_id: companyId,
-        session_id: sessionId,
-      },
-      correlation_id: `photo_ocr:${sessionId}:${photo.id}:${now}`,
-    })),
-  );
+    },
+    error: null,
+    attempts: 0,
+    correlation_id: `photo_ocr:${sessionId}:${photo.id}`,
+    run_after: now,
+  }));
+
+  const { error: jobsError } = await supabase.from("jobs").upsert(jobs, {
+    onConflict: "company_id,correlation_id",
+  });
 
   if (jobsError) {
     await supabase
