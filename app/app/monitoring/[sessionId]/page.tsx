@@ -6,6 +6,7 @@ import { getCurrentUser } from "../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 import { ManualRecognizedItemForm } from "./manual-item-form";
 import { MonitoringPhotoUploadForm } from "./photo-upload-form";
+import { QueueRecognitionForm } from "./queue-recognition-form";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +114,8 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
     label: getStorageFilename(photo.storage_path) || formatShortId(photo.id),
   }));
   const canCreateManualItems = ["admin", "manager"].includes(membershipResult.membership.role);
+  const photoStatusCounts = getPhotoStatusCounts(photos ?? []);
+  const queueablePhotoCount = (photoStatusCounts.uploaded ?? 0) + (photoStatusCounts.failed ?? 0);
 
   return (
     <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 960, padding: "0 1rem" }}>
@@ -145,6 +148,19 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
       <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb", display: "grid", gap: "1rem" }}>
         <h2 style={{ margin: 0 }}>Фото</h2>
         <MonitoringPhotoUploadForm sessionId={session.id} />
+        {canCreateManualItems ? (
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", padding: "0.75rem", display: "grid", gap: "0.75rem" }}>
+            <h3 style={{ margin: 0 }}>Очередь распознавания</h3>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+              {Object.entries(photoStatusCounts).map(([status, count]) => (
+                <span key={status} style={{ border: "1px solid #e5e7eb", borderRadius: 999, padding: "0.25rem 0.5rem" }}>
+                  {status}: {count}
+                </span>
+              ))}
+            </div>
+            <QueueRecognitionForm sessionId={session.id} disabled={queueablePhotoCount === 0} />
+          </div>
+        ) : null}
         <div>
           <h3 style={{ marginTop: 0 }}>Загруженные фото</h3>
           {photosError ? (
@@ -275,6 +291,13 @@ function formatPrice(priceMinor: number | null, currency: string | null) {
   }
 
   return `${(priceMinor / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || "RUB"}`;
+}
+
+function getPhotoStatusCounts(photos: MonitoringPhoto[]) {
+  return photos.reduce<Record<string, number>>((counts, photo) => {
+    counts[photo.status] = (counts[photo.status] ?? 0) + 1;
+    return counts;
+  }, {});
 }
 
 function getRecognizedItemPhotoLabel(item: RecognizedItem) {
