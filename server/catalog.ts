@@ -33,6 +33,24 @@ type CatalogProductRow = {
   updated_by: string | null;
 };
 
+function toCatalogProduct(row: CatalogProductRow): CatalogProduct {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    externalSku: row.external_sku,
+    name: row.name,
+    brand: row.brand,
+    sizeText: row.size_text,
+    ownPriceMinor: row.own_price_minor,
+    currency: row.currency,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+  };
+}
+
 export async function getCatalogProducts(): Promise<CatalogProduct[]> {
   const supabase = await createSupabaseServerClient();
 
@@ -46,21 +64,7 @@ export async function getCatalogProducts(): Promise<CatalogProduct[]> {
     throw new Error(`Failed to load catalog products: ${error.message}`);
   }
 
-  return (data ?? []).map((product) => ({
-    id: product.id,
-    companyId: product.company_id,
-    externalSku: product.external_sku,
-    name: product.name,
-    brand: product.brand,
-    sizeText: product.size_text,
-    ownPriceMinor: product.own_price_minor,
-    currency: product.currency,
-    isActive: product.is_active,
-    createdAt: product.created_at,
-    updatedAt: product.updated_at,
-    createdBy: product.created_by,
-    updatedBy: product.updated_by,
-  }));
+  return (data ?? []).map(toCatalogProduct);
 }
 
 export async function createCatalogProduct(
@@ -99,8 +103,7 @@ export async function createCatalogProduct(
       is_active: true,
     })
     .select("*")
-    .single()
-    .returns<CatalogProductRow>();
+    .single();
 
   if (error) {
     throw new Error(`Failed to create catalog product: ${error.message}`);
@@ -110,19 +113,5 @@ export async function createCatalogProduct(
     throw new Error("Created catalog product was not returned by the database");
   }
 
-  return {
-    id: data.id,
-    companyId: data.company_id,
-    externalSku: data.external_sku,
-    name: data.name,
-    brand: data.brand,
-    sizeText: data.size_text,
-    ownPriceMinor: data.own_price_minor,
-    currency: data.currency,
-    isActive: data.is_active,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
-    createdBy: data.created_by,
-    updatedBy: data.updated_by,
-  };
+  return toCatalogProduct(data as CatalogProductRow);
 }
