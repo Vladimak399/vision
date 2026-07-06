@@ -10,6 +10,7 @@ export function ProcessQueueForm({ sessionId }: { sessionId: string }) {
   const [state, formAction, isPending] = useActionState(processQueuedRecognitionJobs, initialState);
   const reviewHref = `/app/monitoring/${sessionId}/review`;
   const progressHref = `/app/monitoring/${sessionId}/departments`;
+  const exportHref = `/app/monitoring/${sessionId}/export.xlsx`;
 
   return (
     <div style={{ display: "grid", gap: "0.5rem" }}>
@@ -25,6 +26,7 @@ export function ProcessQueueForm({ sessionId }: { sessionId: string }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
         <a href={reviewHref}>Проверить товары</a>
         <a href={progressHref}>Прогресс по отделам</a>
+        <a href={exportHref}>Экспорт XLSX</a>
       </div>
     </div>
   );
