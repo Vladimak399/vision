@@ -20,6 +20,10 @@ export function getDefaultOcrModel() {
   return DEFAULT_OCR_MODEL;
 }
 
+export function getOcrModelPricing(model: string) {
+  return OCR_MODEL_PRICING[model] ?? null;
+}
+
 export function estimateOcrCostMicrousd({
   model,
   inputTokens,
@@ -29,7 +33,12 @@ export function estimateOcrCostMicrousd({
   inputTokens: number;
   outputTokens: number;
 }) {
-  const pricing = OCR_MODEL_PRICING[model] ?? OCR_MODEL_PRICING[DEFAULT_OCR_MODEL];
+  const pricing = getOcrModelPricing(model);
+
+  if (!pricing) {
+    return null;
+  }
+
   const inputUsd = (inputTokens / 1_000_000) * pricing.inputUsdPerMillionTokens;
   const outputUsd = (outputTokens / 1_000_000) * pricing.outputUsdPerMillionTokens;
 
