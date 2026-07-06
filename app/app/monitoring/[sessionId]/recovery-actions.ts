@@ -14,7 +14,7 @@ type RunningJobRow = {
   } | null;
 };
 
-type RecoveryState = {
+export type RecoveryState = {
   error?: string;
   message?: string;
 };
