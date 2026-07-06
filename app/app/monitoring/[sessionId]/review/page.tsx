@@ -18,6 +18,19 @@ type ReviewPageProps = {
   }>;
 };
 
+type ReviewMatch = {
+  id: string;
+  score: number;
+  decision: string;
+  is_active: boolean;
+  catalog_products: {
+    external_sku: string;
+    name: string;
+    brand: string | null;
+    size_text: string | null;
+  } | null;
+};
+
 type ReviewItem = {
   id: string;
   raw_name: string;
@@ -39,6 +52,7 @@ type ReviewItem = {
   monitoring_photos: {
     storage_path: string;
   } | null;
+  matches: ReviewMatch[] | null;
 };
 
 type SessionRow = {
@@ -103,7 +117,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
   let itemsQuery = supabase
     .from("recognized_items")
     .select(
-      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, monitoring_photos(storage_path)",
+      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, monitoring_photos(storage_path), matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text))",
     )
     .eq("company_id", companyId)
     .eq("session_id", sessionId);
@@ -159,30 +173,36 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
 
       {items && items.length > 0 ? (
         <div style={{ display: "grid", gap: "0.75rem" }}>
-          {items.map((item) => (
-            <article key={item.id} style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", display: "grid", gap: "0.75rem" }}>
-              <div style={{ display: "grid", gap: "0.25rem" }}>
-                <h2 style={{ margin: 0 }}>{item.raw_name}</h2>
-                <p style={{ margin: 0, color: "#4b5563" }}>
-                  Цена: {formatPrice(item.price_minor, item.currency)} · статус: {item.status} · отдел: {getDepartmentLabel(item.department)} · уверенность: {formatConfidence(item.confidence)} · связь: {formatConfidence(item.link_confidence)}
-                </p>
-              </div>
+          {items.map((item) => {
+            const activeMatch = getActiveMatch(item.matches);
 
-              <dl style={{ display: "grid", gap: "0.35rem", margin: 0 }}>
-                <Info label="Бренд" value={item.brand} />
-                <Info label="Размер" value={item.size_text} />
-                <Info label="Старая цена" value={formatPrice(item.old_price_minor, item.currency)} />
-                <Info label="Акция" value={formatPrice(item.promo_price_minor, item.currency)} />
-                <Info label="Текст ценника" value={item.price_tag_text} />
-                <Info label="Текст товара" value={item.product_visible_text} />
-                <Info label="Причина проверки" value={item.review_reason} />
-                <Info label="Место" value={item.position_hint} />
-                <Info label="Фото" value={getStorageFilename(item.monitoring_photos?.storage_path ?? "") || "—"} />
-              </dl>
+            return (
+              <article key={item.id} style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", display: "grid", gap: "0.75rem" }}>
+                <div style={{ display: "grid", gap: "0.25rem" }}>
+                  <h2 style={{ margin: 0 }}>{item.raw_name}</h2>
+                  <p style={{ margin: 0, color: "#4b5563" }}>
+                    Цена: {formatPrice(item.price_minor, item.currency)} · статус: {item.status} · отдел: {getDepartmentLabel(item.department)} · уверенность: {formatConfidence(item.confidence)} · связь: {formatConfidence(item.link_confidence)}
+                  </p>
+                </div>
 
-              <RecognizedItemReviewControls sessionId={sessionId} item={item} />
-            </article>
-          ))}
+                <dl style={{ display: "grid", gap: "0.35rem", margin: 0 }}>
+                  <Info label="Бренд" value={item.brand} />
+                  <Info label="Размер" value={item.size_text} />
+                  <Info label="Старая цена" value={formatPrice(item.old_price_minor, item.currency)} />
+                  <Info label="Акция" value={formatPrice(item.promo_price_minor, item.currency)} />
+                  <Info label="Текст ценника" value={item.price_tag_text} />
+                  <Info label="Текст товара" value={item.product_visible_text} />
+                  <Info label="Причина проверки" value={item.review_reason} />
+                  <Info label="Место" value={item.position_hint} />
+                  <Info label="Фото" value={getStorageFilename(item.monitoring_photos?.storage_path ?? "") || "—"} />
+                </dl>
+
+                {activeMatch ? <ActiveMatchBlock match={activeMatch} /> : <p style={{ color: "#6b7280", margin: 0 }}>Совпадение с каталогом пока не подобрано.</p>}
+
+                <RecognizedItemReviewControls sessionId={sessionId} item={item} />
+              </article>
+            );
+          })}
         </div>
       ) : (
         <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem" }}>
@@ -190,6 +210,20 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
         </section>
       )}
     </main>
+  );
+}
+
+function ActiveMatchBlock({ match }: { match: ReviewMatch }) {
+  const product = match.catalog_products;
+
+  return (
+    <section style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10, display: "grid", gap: "0.35rem", padding: "0.75rem" }}>
+      <strong>Кандидат из каталога</strong>
+      <p style={{ margin: 0 }}>{product?.name ?? "Товар не найден"}</p>
+      <p style={{ color: "#4b5563", margin: 0 }}>
+        Артикул: {product?.external_sku ?? "—"} · бренд: {product?.brand ?? "—"} · размер: {product?.size_text ?? "—"} · score: {formatConfidence(match.score)} · decision: {match.decision}
+      </p>
+    </section>
   );
 }
 
@@ -238,6 +272,10 @@ function getDepartmentLabel(value: string | null) {
   }
 
   return "Без отдела";
+}
+
+function getActiveMatch(matches: ReviewMatch[] | null) {
+  return matches?.find((match) => match.is_active) ?? null;
 }
 
 function formatPrice(priceMinor: number | null, currency: string | null) {
