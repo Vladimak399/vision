@@ -134,12 +134,16 @@ export async function suggestCatalogMatchesForSession(_state: MatchActionState, 
 
     if (best.score >= CONFIDENT_MATCH_MIN_SCORE) {
       strong += 1;
-      await supabase
+      const { error: updateItemError } = await supabase
         .from("recognized_items")
         .update({ status: "matched" })
         .eq("company_id", companyId)
         .eq("session_id", sessionId)
         .eq("id", item.id);
+
+      if (updateItemError) {
+        return { error: `Match сохранён, но статус товара не обновился: ${updateItemError.message}` };
+      }
     }
   }
 
@@ -185,6 +189,18 @@ export async function updateCatalogMatchDecision(formData: FormData): Promise<vo
   }
 
   if (decision === "accepted") {
+    const { error: disableOtherMatchesError } = await supabase
+      .from("matches")
+      .update({ is_active: false })
+      .eq("company_id", companyId)
+      .eq("recognized_item_id", match.recognized_item_id)
+      .eq("is_active", true)
+      .neq("id", match.id);
+
+    if (disableOtherMatchesError) {
+      throw new Error(`Не удалось отключить другие match: ${disableOtherMatchesError.message}`);
+    }
+
     const { error: updateMatchError } = await supabase
       .from("matches")
       .update({ decision: "accepted", is_active: true })
