@@ -30,7 +30,7 @@ type MonitoringPhoto = {
 
 type RecognizedItem = {
   id: string;
-  photo_id: string;
+  photo_id: string | null;
   raw_name: string;
   brand: string | null;
   size_text: string | null;
@@ -170,7 +170,8 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
 
       {canCreateManualItems ? (
         <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb", display: "grid", gap: "1rem" }}>
-          <h2 style={{ margin: 0 }}>Ручной ввод товара</h2>
+          <h2 style={{ margin: 0 }}>Ручная правка / fallback</h2>
+          <p style={{ color: "#4b5563", margin: 0 }}>Основной поток: загрузить фото и дождаться распознавания. Ручное добавление нужно только как запасной вариант, если AI не распознал товар или требуется корректировка.</p>
           <ManualRecognizedItemForm sessionId={session.id} photos={photoOptions} />
         </section>
       ) : null}
@@ -202,7 +203,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
                     <td style={cellStyle}>{item.size_text || "—"}</td>
                     <td style={cellStyle}>{item.status}</td>
                     <td style={cellStyle}>{formatDateTime(item.created_at)}</td>
-                    <td style={cellStyle}>{getStorageFilename(item.monitoring_photos?.storage_path ?? "") || formatShortId(item.photo_id)}</td>
+                    <td style={cellStyle}>{getRecognizedItemPhotoLabel(item)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -211,7 +212,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
         ) : (
           <div style={{ display: "grid", gap: "0.25rem" }}>
             <p style={{ fontWeight: 600, margin: 0 }}>Товары пока не внесены</p>
-            <p style={{ color: "#4b5563", margin: 0 }}>Добавьте товар вручную по загруженному фото</p>
+            <p style={{ color: "#4b5563", margin: 0 }}>После распознавания здесь появятся найденные товары. Ручное добавление нужно только как запасной вариант.</p>
           </div>
         )}
       </section>
@@ -264,16 +265,26 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString("ru-RU");
 }
 
-function formatShortId(value: string) {
-  return value.slice(0, 8);
+function formatShortId(value: string | null) {
+  return value ? value.slice(0, 8) : "—";
 }
 
-function formatPrice(priceMinor: number | null, currency: string) {
+function formatPrice(priceMinor: number | null, currency: string | null) {
   if (priceMinor === null) {
     return "—";
   }
 
-  return `${(priceMinor / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  return `${(priceMinor / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || "RUB"}`;
+}
+
+function getRecognizedItemPhotoLabel(item: RecognizedItem) {
+  const storagePath = item.monitoring_photos?.storage_path;
+
+  if (storagePath) {
+    return getStorageFilename(storagePath) || formatShortId(item.photo_id);
+  }
+
+  return item.photo_id ? `Фото ${formatShortId(item.photo_id)}` : "Фото не связано";
 }
 
 function getStorageFilename(storagePath: string) {
