@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "../../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../../server/primary-membership";
 import { MatchControls } from "../match-controls";
+import { updateCatalogMatchDecision } from "../match-actions";
 import { RecognizedItemReviewControls } from "../recognized-item-review-controls";
 
 type ReviewDepartmentFilter = "all" | "products" | "chemistry" | "none";
@@ -197,7 +198,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
                   <Info label="Фото" value={getStorageFilename(item.monitoring_photos?.storage_path ?? "") || "—"} />
                 </dl>
 
-                {activeMatch ? <ActiveMatchBlock match={activeMatch} /> : <p style={{ color: "#6b7280", margin: 0 }}>Совпадение с каталогом пока не подобрано.</p>}
+                {activeMatch ? <ActiveMatchBlock sessionId={sessionId} match={activeMatch} /> : <p style={{ color: "#6b7280", margin: 0 }}>Совпадение с каталогом пока не подобрано.</p>}
 
                 <RecognizedItemReviewControls sessionId={sessionId} item={item} />
               </article>
@@ -213,16 +214,30 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
   );
 }
 
-function ActiveMatchBlock({ match }: { match: ReviewMatch }) {
+function ActiveMatchBlock({ match, sessionId }: { match: ReviewMatch; sessionId: string }) {
   const product = match.catalog_products;
 
   return (
-    <section style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10, display: "grid", gap: "0.35rem", padding: "0.75rem" }}>
+    <section style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10, display: "grid", gap: "0.5rem", padding: "0.75rem" }}>
       <strong>Кандидат из каталога</strong>
       <p style={{ margin: 0 }}>{product?.name ?? "Товар не найден"}</p>
       <p style={{ color: "#4b5563", margin: 0 }}>
         Артикул: {product?.external_sku ?? "—"} · бренд: {product?.brand ?? "—"} · размер: {product?.size_text ?? "—"} · score: {formatConfidence(match.score)} · decision: {match.decision}
       </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+        <form action={updateCatalogMatchDecision}>
+          <input type="hidden" name="session_id" value={sessionId} />
+          <input type="hidden" name="match_id" value={match.id} />
+          <input type="hidden" name="decision" value="accepted" />
+          <button type="submit">Принять</button>
+        </form>
+        <form action={updateCatalogMatchDecision}>
+          <input type="hidden" name="session_id" value={sessionId} />
+          <input type="hidden" name="match_id" value={match.id} />
+          <input type="hidden" name="decision" value="rejected" />
+          <button type="submit">Отклонить</button>
+        </form>
+      </div>
     </section>
   );
 }
