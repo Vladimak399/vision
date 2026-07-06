@@ -44,9 +44,7 @@ export async function suggestCatalogMatchesForSession(_state: MatchActionState, 
     .select("id, raw_name, brand, size_text, price_tag_text, product_visible_text")
     .eq("company_id", companyId)
     .eq("session_id", sessionId)
-    .in("status", ["needs_review", "recognized", "unmatched"])
-    .limit(100)
-    .returns<RecognizedItemRow[]>();
+    .in("status", ["needs_review", "recognized", "unmatched"]);
 
   if (department === "none") {
     itemsQuery = itemsQuery.is("department", null);
@@ -54,7 +52,7 @@ export async function suggestCatalogMatchesForSession(_state: MatchActionState, 
     itemsQuery = itemsQuery.eq("department", department);
   }
 
-  const { data: items, error: itemsError } = await itemsQuery;
+  const { data: items, error: itemsError } = await itemsQuery.limit(100).returns<RecognizedItemRow[]>();
 
   if (itemsError) {
     return { error: `Не удалось загрузить распознанные товары: ${itemsError.message}` };
