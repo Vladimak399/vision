@@ -19,6 +19,12 @@ type MonitoringSessionLifecycleRow = {
   started_at: string | null;
 };
 
+type QueueablePhotoRow = {
+  id: string;
+  storage_path: string;
+  status: "uploaded" | "failed";
+};
+
 export async function createMonitoringSession(
   _state: MonitoringSessionCreateState,
   formData: FormData,
@@ -210,6 +216,138 @@ export async function uploadMonitoringPhotos(
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
   return { message: `Загружено фото: ${uploadedCount}. Статус сессии обновлён.` };
+}
+
+export type QueueRecognitionState = {
+  error?: string;
+  message?: string;
+};
+
+export async function queueRecognitionForSession(
+  _state: QueueRecognitionState,
+  formData: FormData,
+): Promise<QueueRecognitionState> {
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const nextPath = sessionId ? `/app/monitoring/${encodeURIComponent(sessionId)}` : "/app/monitoring";
+  const user = await getCurrentUser();
+
+  if (!user) {
+    redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+  }
+
+  let membershipResult;
+  try {
+    membershipResult = await getPrimaryCompanyMembership();
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Не удалось проверить доступ к компании." };
+  }
+
+  if (membershipResult.status !== "ok") {
+    return { error: "Нет доступа к компании." };
+  }
+
+  if (!["admin", "manager"].includes(membershipResult.membership.role)) {
+    return { error: "Запускать распознавание могут только admin или manager." };
+  }
+
+  if (!sessionId) {
+    return { error: "Не указана сессия мониторинга." };
+  }
+
+  const companyId = membershipResult.membership.companyId;
+  const now = new Date().toISOString();
+  const supabase = await createSupabaseServerClient();
+  const { data: session, error: sessionError } = await supabase
+    .from("monitoring_sessions")
+    .select("id, status, started_at")
+    .eq("company_id", companyId)
+    .eq("id", sessionId)
+    .maybeSingle()
+    .returns<MonitoringSessionLifecycleRow | null>();
+
+  if (sessionError) {
+    return { error: `Не удалось проверить сессию мониторинга: ${sessionError.message}` };
+  }
+
+  if (!session) {
+    return { error: "Сессия мониторинга не найдена в текущей компании." };
+  }
+
+  if (["completed", "cancelled"].includes(session.status)) {
+    return { error: "Нельзя запускать распознавание для завершённой или отменённой сессии." };
+  }
+
+  const { data: photos, error: photosError } = await supabase
+    .from("monitoring_photos")
+    .select("id, storage_path, status")
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId)
+    .in("status", ["uploaded", "failed"])
+    .returns<QueueablePhotoRow[]>();
+
+  if (photosError) {
+    return { error: `Не удалось загрузить фото для очереди: ${photosError.message}` };
+  }
+
+  if (!photos || photos.length === 0) {
+    return { message: "Нет новых или ошибочных фото для постановки в очередь." };
+  }
+
+  const photoIds = photos.map((photo) => photo.id);
+  const { error: photoUpdateError } = await supabase
+    .from("monitoring_photos")
+    .update({ status: "queued", error: null })
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId)
+    .in("id", photoIds)
+    .in("status", ["uploaded", "failed"]);
+
+  if (photoUpdateError) {
+    return { error: `Не удалось обновить статусы фото: ${photoUpdateError.message}` };
+  }
+
+  const { error: jobsError } = await supabase.from("jobs").insert(
+    photos.map((photo) => ({
+      company_id: companyId,
+      session_id: sessionId,
+      kind: "photo_ocr",
+      status: "queued",
+      payload: {
+        photo_id: photo.id,
+        storage_path: photo.storage_path,
+        company_id: companyId,
+        session_id: sessionId,
+      },
+      correlation_id: `photo_ocr:${sessionId}:${photo.id}:${now}`,
+    })),
+  );
+
+  if (jobsError) {
+    await supabase
+      .from("monitoring_photos")
+      .update({ status: "uploaded" })
+      .eq("company_id", companyId)
+      .eq("session_id", sessionId)
+      .in("id", photoIds)
+      .eq("status", "queued");
+
+    return { error: `Не удалось создать OCR jobs: ${jobsError.message}` };
+  }
+
+  const { error: sessionUpdateError } = await supabase
+    .from("monitoring_sessions")
+    .update({ status: "processing", started_at: session.started_at ?? now })
+    .eq("company_id", companyId)
+    .eq("id", sessionId)
+    .in("status", ["draft", "uploading", "review", "failed"]);
+
+  if (sessionUpdateError) {
+    return { error: `Фото поставлены в очередь, но статус сессии не обновился: ${sessionUpdateError.message}` };
+  }
+
+  revalidatePath("/app/monitoring");
+  revalidatePath(`/app/monitoring/${sessionId}`);
+  return { message: `Поставлено в очередь на распознавание: ${photos.length} фото.` };
 }
 
 export type ManualRecognizedItemState = {
