@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "../../server/auth";
@@ -33,6 +34,10 @@ export default async function AppPage() {
         <p style={{ margin: 0, textTransform: "uppercase" }}>PriceVision</p>
         <h1>Рабочая область</h1>
         <p>Вы вошли как {user.email ?? "пользователь без email"}.</p>
+        <nav aria-label="Разделы справочников" style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "1rem" }}>
+          <Link href="/app/stores">Магазины</Link>
+          <Link href="/app/competitors">Конкуренты</Link>
+        </nav>
       </div>
 
       {membershipError ? (
