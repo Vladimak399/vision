@@ -6,15 +6,17 @@ Scope: audit-only PR. No application code, UI, migrations, or schema changes wer
 
 ## 1. Executive summary
 
-PriceVision has a coherent early foundation for authenticated company-scoped work: users sign in through Supabase Auth, app pages use the current user's primary company membership, core tables have RLS enabled, monitoring sessions can be created, photos can be uploaded to a private Supabase Storage bucket, and manual recognized items can be entered as a fallback.
+PriceVision has a coherent early foundation for authenticated company-scoped work: users sign in through Supabase Auth, app pages use the current user's primary company membership, core tables have RLS enabled, monitoring sessions can be created, photos can be uploaded to a private Supabase Storage bucket, client-side photo compression is in place, and manual recognized items can be entered as a fallback.
 
-The project is **not ready to start AI/OCR or X5/SPAR website-source implementation yet**. The most important blockers are:
+Follow-up verification confirmed that dependency resolution is healthy and both `npm run typecheck` and `npm run build` pass. The earlier dependency-resolution failure around `papaparse` and `xlsx` was not reproducible after dependency verification and is not a current blocker.
 
-- The project currently does not typecheck or build because `papaparse` and `xlsx` cannot be resolved from the installed dependency tree, even though they are listed in `package.json`.
-- Catalog import writes to `catalog_import_rows`, but that table has only a select policy and no insert policy, so authenticated user imports can fail after creating the import record and products.
-- Several server actions permit broad member writes on RLS but app-side role checks are inconsistent for stores, competitors, catalog import, and direct catalog product creation.
+The project is **not ready to start AI/OCR or X5/SPAR website-source implementation yet**. The most important remaining blockers are:
+
+- Catalog import writes to `catalog_import_rows`, but that table lacks the required scoped RLS insert/read coverage, so authenticated user imports can fail to persist row-level audit/error details.
+- Several server actions permit broad member writes on RLS while app-side role checks are inconsistent for stores, competitors, catalog import, and direct catalog product creation.
 - Login redirects trust the `next` search parameter on the client, creating an open-redirect risk.
 - The app uses the first membership as a hidden primary company and has no company switcher; this can produce confusing cross-company behavior for users in multiple companies.
+- Catalog listing can mix products from all user memberships because catalog loading is not explicitly scoped to the active company.
 - The current schema has promising AI/reporting primitives (`recognized_items`, `matches`, `evidence`, `price_history`, `reports`, `jobs`), but website-source runs, raw payload storage, external product identities, and source disable/rate-limit controls are missing.
 
 ## 2. Current project status
@@ -33,42 +35,27 @@ The project is **not ready to start AI/OCR or X5/SPAR website-source implementat
 
 | Check | Result | Notes |
 | --- | --- | --- |
-| `npm run typecheck` | Failed | Cannot resolve `papaparse` and `xlsx`; two implicit `any` errors follow from the missing parser types. npm also warns that env config `http-proxy` is unknown. |
-| `npm run build` | Failed | Webpack cannot resolve `papaparse` and `xlsx`; Next.js telemetry notice appears; serverActions experiment is shown. |
+| `npm run typecheck` | Passed | Follow-up verification completed successfully. |
+| `npm run build` | Passed | Follow-up verification completed successfully. |
 
-Raw results:
+### Follow-up verification
 
-```text
-npm run typecheck
-- app/app/catalog/actions.ts(3,18): error TS2307: Cannot find module 'papaparse' or its corresponding type declarations.
-- app/app/catalog/actions.ts(4,23): error TS2307: Cannot find module 'xlsx' or its corresponding type declarations.
-- app/app/catalog/actions.ts(71,45): error TS7006: Parameter 'error' implicitly has an 'any' type.
-- app/app/catalog/actions.ts(73,38): error TS7006: Parameter 'error' implicitly has an 'any' type.
-- Exit code: 2
+- `npm install --package-lock-only` — no changes.
+- `npm run typecheck` — passed.
+- `npm run build` — passed.
+- `git status --short` — clean.
 
-npm run build
-- Failed to compile.
-- Module not found: Can't resolve 'papaparse'.
-- Module not found: Can't resolve 'xlsx'.
-- Exit code: 1
-```
+### Informational note on earlier dependency failure
+
+An earlier audit environment reported missing `papaparse` and `xlsx` resolution and treated build/typecheck failure as a critical blocker. Follow-up dependency verification found that `package.json` already declares `papaparse`, `xlsx`, and `@types/papaparse`; `package-lock.json` already contains entries for `node_modules/@types/papaparse`, `node_modules/papaparse`, and `node_modules/xlsx`; `npm install --package-lock-only` made no changes; and both `npm run typecheck` and `npm run build` passed. The earlier failure was not reproducible after dependency verification and does not block AI/OCR or X5/SPAR anymore.
 
 ## 3. Critical blockers
 
-### Finding C-1: Build and typecheck are broken
-
-- Severity: Critical
-- Affected files/tables: `app/app/catalog/actions.ts`, `package.json`, installed dependency tree / lockfile state
-- Why it matters: AI/OCR, matching, reports, and website source work should not begin while the main branch cannot compile. The failure is in catalog import, which is a prerequisite for matching recognized or external products to the retailer catalog.
-- Recommended fix: In a separate fix PR, restore dependency installation consistency for `papaparse` and `xlsx`, verify `package-lock.json`, reinstall dependencies if needed, and rerun typecheck/build. Then address any remaining parser typing errors.
-- Blocks AI/OCR: Yes
-- Blocks X5/SPAR website sources: Yes
-
-### Finding C-2: Catalog import row writes are blocked by RLS policy gap
+### Finding C-1: Catalog import row writes are blocked by RLS policy gap
 
 - Severity: Critical
 - Affected files/tables: `app/app/catalog/actions.ts`, `public.catalog_import_rows`, `supabase/migrations/20260703132000_foundation.sql`
-- Why it matters: `catalog_import_rows` has RLS enabled and only a select policy through the imported parent is absent; the action inserts row results after processing each catalog row. Without an insert policy, authenticated imports can create/import products but fail to persist row-level audit/error details.
+- Why it matters: `catalog_import_rows` has RLS enabled, and the catalog import action inserts row results after processing each catalog row. Without scoped insert/read policies, authenticated imports can create an import record and products but fail to persist row-level audit/error details. This undermines catalog import observability and future ingestion workflows.
 - Recommended fix: Add a migration with scoped insert/select policies for `catalog_import_rows`, preferably checking membership/role through the parent `catalog_imports.company_id`. Do not use service role to bypass user-facing RLS.
 - Blocks AI/OCR: Yes
 - Blocks X5/SPAR website sources: Yes
@@ -111,8 +98,7 @@ npm run build
 - Blocks AI/OCR: No
 - Blocks X5/SPAR website sources: Yes
 
-
-### Finding H-6: Catalog page can mix products from all user memberships
+### Finding H-5: Catalog page can mix products from all user memberships
 
 - Severity: High
 - Affected files/tables: `server/catalog.ts`, `app/app/catalog/page.tsx`, `public.catalog_products`
@@ -121,7 +107,7 @@ npm run build
 - Blocks AI/OCR: Yes, because recognition matching must use the intended company catalog only.
 - Blocks X5/SPAR website sources: Yes, because external-source matching must not mix company catalogs.
 
-### Finding H-5: `catalog_import_rows` does not carry `company_id`
+### Finding H-6: `catalog_import_rows` does not carry `company_id`
 
 - Severity: High
 - Affected files/tables: `public.catalog_import_rows`, `app/app/catalog/actions.ts`
@@ -224,12 +210,12 @@ npm run build
 - Blocks AI/OCR: No
 - Blocks X5/SPAR website sources: No
 
-### Finding L-3: Unused imports and dependencies should be reviewed after build is fixed
+### Finding L-3: Unused imports and dependencies should be reviewed periodically
 
 - Severity: Low
 - Affected files/tables: `app/app/catalog/page.tsx`, `package.json`
 - Why it matters: `CatalogProduct` appears imported but unused; `clsx`, `lucide-react`, and `tailwind-merge` are listed but not currently obvious in the app code. This is cleanup, not a product blocker.
-- Recommended fix: After dependency resolution is fixed, run lint/dependency checks and remove unused imports/packages if confirmed.
+- Recommended fix: Run lint/dependency checks and remove unused imports/packages if confirmed.
 - Blocks AI/OCR: No
 - Blocks X5/SPAR website sources: No
 
@@ -275,7 +261,7 @@ npm run build
 
 - Severity: Critical
 - Affected files/tables: `public.catalog_import_rows`
-- Why it matters: RLS is enabled but no policy is defined for reads or writes in the foundation migration. This can block import observability and future audit screens.
+- Why it matters: RLS is enabled but no scoped policy is defined for the row-level import records needed by the catalog import workflow. This can block import observability and future audit screens.
 - Recommended fix: Add parent-scoped policies through `catalog_imports` and verify with Supabase tests.
 - Blocks AI/OCR: Yes
 - Blocks X5/SPAR website sources: Yes
@@ -350,7 +336,6 @@ npm run build
 
 ### Risks
 
-- Build currently fails at the parser imports.
 - No server-side file size cap for catalog import.
 - Unknown file extensions are treated as CSV.
 - `external_sku` is the only required identity; barcode/GTIN is not modeled.
@@ -387,14 +372,15 @@ Status: **Not ready to implement yet.**
 
 Required before starting AI/OCR:
 
-1. Fix build/typecheck.
-2. Define session/photo/job lifecycle and state transitions.
-3. Add/confirm queue architecture for photo recognition jobs.
-4. Add OCR result storage for raw provider payload, model name/version, prompt/parser version, token/cost metadata, and parse errors.
-5. Add review workflow fields/actions for recognized items.
-6. Add controlled image viewing via signed URLs or server-mediated access.
-7. Tighten catalog permissions and import reliability because matching depends on clean catalog data.
-8. Add automated RLS tests for company isolation.
+1. Add scoped RLS policies for `catalog_import_rows`.
+2. Align catalog/store/competitor permissions between app actions and RLS.
+3. Define session/photo/job lifecycle and state transitions.
+4. Add/confirm queue architecture for photo recognition jobs.
+5. Add OCR result storage for raw provider payload, model name/version, prompt/parser version, token/cost metadata, and parse errors.
+6. Add review workflow fields/actions for recognized items.
+7. Add controlled image viewing via signed URLs or server-mediated access.
+8. Tighten catalog permissions and import reliability because matching depends on clean catalog data.
+9. Add automated RLS tests for company isolation.
 
 ## 13. Readiness for X5/SPAR website price sources
 
@@ -423,18 +409,19 @@ Status: **Not ready to implement yet.**
 
 ## 14. Recommended next PR sequence
 
-1. **Build/dependency fix PR**: restore `papaparse`/`xlsx` resolution, run `npm install`/lockfile verification, pass `npm run typecheck` and `npm run build`.
-2. **RLS/permission alignment PR**: fix `catalog_import_rows` policies, remove overly broad member insert policies, centralize permission matrix, add app-side role checks.
-3. **Company context PR**: introduce explicit company selector/current company source and update routes/actions to avoid hidden first-membership behavior.
-4. **Upload reliability PR**: decide direct Storage upload vs Server Action aggregate limits, improve duplicate/partial failure UX, optionally add HEIC guidance/conversion plan.
-5. **Monitoring lifecycle/jobs PR**: add session/photo transitions, enqueue jobs after upload, and define retry/error handling.
-6. **AI/OCR schema PR**: add OCR result/raw output/review metadata tables or fields; do not implement provider calls yet.
-7. **AI/OCR worker PR**: implement recognition behind worker/job boundary with service-role isolation and signed worker auth.
-8. **Review/matching PR**: build review queue, candidate matches, alias learning, and confirmation flow.
-9. **Website source architecture PR**: add source/source-run/raw-payload/external-product schema and admin source controls.
-10. **X5/SPAR research PR**: document terms/API/city-store selection without production scraping.
-11. **X5/SPAR implementation PRs**: one source at a time, behind disabled-by-default flags and rate limits.
-12. **Reports/Excel PR**: generate reports after data model supports both photo and website observations.
+1. **RLS for catalog_import_rows PR**: add scoped insert/read policies for row-level catalog import records.
+2. **Role/permission alignment PR**: remove overly broad member insert policies where needed, centralize permission matrix, add app-side role checks.
+3. **Login redirect safety PR**: validate the `next` parameter and allow only safe internal app paths.
+4. **Company context/catalog scoping PR**: introduce explicit company selector/current company source and update catalog reads/actions to avoid hidden first-membership behavior.
+5. **Upload reliability PR**: decide direct Storage upload vs Server Action aggregate limits, improve duplicate/partial failure UX, optionally add HEIC guidance/conversion plan.
+6. **Monitoring lifecycle/jobs PR**: add session/photo transitions, enqueue jobs after upload, and define retry/error handling.
+7. **AI/OCR schema PR**: add OCR result/raw output/review metadata tables or fields; do not implement provider calls yet.
+8. **Website source architecture PR**: add source/source-run/raw-payload/external-product schema and admin source controls.
+9. **X5/SPAR research PR**: document terms/API/city-store selection without production scraping.
+10. **X5/SPAR implementation PRs**: one source at a time, behind disabled-by-default flags and rate limits.
+11. **AI/OCR worker PR**: implement recognition behind worker/job boundary with service-role isolation and signed worker auth.
+12. **Review/matching PR**: build review queue, candidate matches, alias learning, and confirmation flow.
+13. **Reports/Excel PR**: generate reports after data model supports both photo and website observations.
 
 ## 15. Explicit “Do not start yet” list
 
