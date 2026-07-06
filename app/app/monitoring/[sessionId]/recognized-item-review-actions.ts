@@ -7,10 +7,10 @@ import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 
-type ReviewStatus = "needs_review" | "confirmed" | "rejected";
+type ReviewStatus = "needs_review" | "confirmed" | "rejected" | "unmatched";
 
 const REVIEW_ROLES = new Set(["admin", "manager", "reviewer"]);
-const REVIEW_STATUSES = new Set<ReviewStatus>(["needs_review", "confirmed", "rejected"]);
+const REVIEW_STATUSES = new Set<ReviewStatus>(["needs_review", "confirmed", "rejected", "unmatched"]);
 
 export async function updateRecognizedItemStatus(formData: FormData): Promise<void> {
   const auth = await getReviewAuth(formData);
@@ -35,6 +35,19 @@ export async function updateRecognizedItemStatus(formData: FormData): Promise<vo
 
   if (error) {
     throw new Error(`Не удалось обновить статус: ${error.message}`);
+  }
+
+  if (status === "unmatched") {
+    const { error: matchError } = await supabase
+      .from("matches")
+      .update({ is_active: false })
+      .eq("company_id", companyId)
+      .eq("recognized_item_id", itemId)
+      .eq("is_active", true);
+
+    if (matchError) {
+      throw new Error(`Статус обновлён, но match не отключился: ${matchError.message}`);
+    }
   }
 
   revalidatePath(`/app/monitoring/${sessionId}`);
