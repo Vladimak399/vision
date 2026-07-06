@@ -59,6 +59,23 @@ function normalizeRows(rows: ImportRow[]): ImportRow[] {
   );
 }
 
+async function parseCsv(buffer: Buffer): Promise<ImportRow[]> {
+  const csv = buffer.toString("utf8");
+  const result = Papa.parse<ImportRow>(csv, {
+    header: true,
+    skipEmptyLines: true,
+    delimiter: "",
+    delimitersToGuess: [",", ";", "\t", "|"],
+  });
+
+  const fatalErrors = result.errors.filter((error) => error.code !== "TooFewFields" && error.code !== "TooManyFields");
+  if (fatalErrors.length > 0) {
+    throw new Error(fatalErrors.map((error) => error.message).join("; "));
+  }
+
+  return normalizeRows(result.data);
+}
+
 async function parseImportFile(file: File): Promise<ImportRow[]> {
   const extension = file.name.split(".").pop()?.toLowerCase();
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -73,17 +90,7 @@ async function parseImportFile(file: File): Promise<ImportRow[]> {
     return normalizeRows(XLSX.utils.sheet_to_json<ImportRow>(workbook.Sheets[firstSheetName], { defval: "" }));
   }
 
-  const csv = buffer.toString("utf8");
-  const result = Papa.parse<ImportRow>(csv, {
-    header: true,
-    skipEmptyLines: true,
-  });
-
-  if (result.errors.length > 0) {
-    throw new Error(result.errors.map((error) => error.message).join("; "));
-  }
-
-  return normalizeRows(result.data);
+  return parseCsv(buffer);
 }
 
 export async function importCatalogAction(
@@ -103,7 +110,17 @@ export async function importCatalogAction(
 
   const companyId = membershipResult.membership.companyId;
   const supabase = await createSupabaseServerClient();
-  const rows = await parseImportFile(file);
+
+  let rows: ImportRow[] = [];
+  try {
+    rows = await parseImportFile(file);
+  } catch (error) {
+    return {
+      ...initialImportResult,
+      errors: [`Не удалось прочитать файл: ${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+
   const result: CatalogImportResult = { ...initialImportResult };
 
   const { data: importRecord, error: importError } = await supabase
@@ -119,7 +136,10 @@ export async function importCatalogAction(
     .single();
 
   if (importError || !importRecord) {
-    throw new Error(`Не удалось создать запись импорта: ${importError?.message ?? "нет данных"}`);
+    return {
+      ...initialImportResult,
+      errors: [`Не удалось создать запись импорта: ${importError?.message ?? "нет данных"}`],
+    };
   }
 
   const skus = rows
@@ -135,7 +155,10 @@ export async function importCatalogAction(
       .in("external_sku", skus);
 
     if (existingError) {
-      throw new Error(`Не удалось проверить существующие товары: ${existingError.message}`);
+      return {
+        ...initialImportResult,
+        errors: [`Не удалось проверить существующие товары: ${existingError.message}`],
+      };
     }
 
     for (const product of existingProducts ?? []) {
