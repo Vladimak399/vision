@@ -8,7 +8,7 @@ import { getCurrentUser } from "../../../../server/auth";
 import { getCatalogMatchCandidates, type CatalogMatchProduct } from "../../../../server/catalog-matching";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 
-type MatchActionState = {
+export type MatchActionState = {
   error?: string;
   message?: string;
 };
@@ -99,6 +99,19 @@ export async function suggestCatalogMatchesForSession(_state: MatchActionState, 
 
   if (!items || items.length === 0) {
     return { message: "Нет товаров для автоподбора." };
+  }
+
+  const itemIds = items.map((item) => item.id);
+  const { error: oldMatchesError } = await supabase
+    .from("matches")
+    .update({ is_active: false })
+    .eq("company_id", companyId)
+    .in("recognized_item_id", itemIds)
+    .eq("decision", "auto")
+    .eq("is_active", true);
+
+  if (oldMatchesError) {
+    return { error: `Не удалось обновить старые auto-match: ${oldMatchesError.message}` };
   }
 
   const { data: products, error: productsError } = await supabase
