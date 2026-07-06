@@ -33,6 +33,10 @@ export default async function CatalogImportPage() {
         <p style={{ color: "#64748b", marginTop: "0.25rem" }}>
           Загрузите CSV или XLSX файл, чтобы создать или обновить товары компании {membershipResult.membership.companyName}.
         </p>
+        <p style={{ color: "#64748b", marginTop: "0.5rem" }}>
+          CSV можно загружать с разделителем &quot;,&quot; или &quot;;&quot;. Для файлов из Excel надежнее
+          использовать XLSX.
+        </p>
       </header>
 
       <section style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "1.5rem" }}>
