@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { getServerEnv } from "../../../lib/env";
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { getCurrentUser } from "../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
@@ -67,6 +68,11 @@ export async function processQueuedRecognitionJobs(
 
   if (!sessionId) {
     return { error: "Не указана сессия мониторинга." };
+  }
+
+  const env = getServerEnv();
+  if (!env.OPENAI_API_KEY) {
+    return { error: "Ключ распознавания не настроен. Очередь и фото не изменены." };
   }
 
   const companyId = membershipResult.membership.companyId;
