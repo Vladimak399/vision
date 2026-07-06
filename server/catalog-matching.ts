@@ -169,7 +169,11 @@ export function tokenizeForMatch(value: string) {
 }
 
 export function normalizeSize(value: string) {
-  const normalized = normalizeText(value).replace(/,/g, ".");
+  const normalized = value
+    .toLowerCase()
+    .replace(/[ё]/g, "е")
+    .replace(/,/g, ".")
+    .replace(/\s+/g, " ");
   const match = normalized.match(/(\d+(?:\.\d+)?)\s*(кг|kg|г|гр|g|л|l|мл|ml|шт)/i);
 
   if (!match) {
@@ -184,24 +188,28 @@ export function normalizeSize(value: string) {
   }
 
   if (unit === "кг" || unit === "kg") {
-    return `${amount * 1000}g`;
+    return `${roundSize(amount * 1000)}g`;
   }
 
   if (unit === "г" || unit === "гр" || unit === "g") {
-    return `${amount}g`;
+    return `${roundSize(amount)}g`;
   }
 
   if (unit === "л" || unit === "l") {
-    return `${amount * 1000}ml`;
+    return `${roundSize(amount * 1000)}ml`;
   }
 
   if (unit === "мл" || unit === "ml") {
-    return `${amount}ml`;
+    return `${roundSize(amount)}ml`;
   }
 
-  return `${amount}pc`;
+  return `${roundSize(amount)}pc`;
 }
 
 function roundScore(score: number) {
   return Math.round(score * 10000) / 10000;
+}
+
+function roundSize(value: number) {
+  return Math.round(value * 1000) / 1000;
 }
