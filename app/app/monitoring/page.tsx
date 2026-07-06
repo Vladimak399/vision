@@ -107,10 +107,20 @@ export default async function MonitoringPage() {
               <tbody>
                 {sessions.map((session) => (
                   <tr key={session.id}>
-                    <td style={cellStyle}>{new Date(session.created_at).toLocaleString("ru-RU")}</td>
-                    <td style={cellStyle}>{session.status}</td>
-                    <td style={cellStyle}>{session.stores?.name ?? "—"}</td>
-                    <td style={cellStyle}>{photoCounts.get(session.id) ?? 0}</td>
+                    <td style={cellStyle}>
+                      <Link href={`/app/monitoring/${session.id}`}>
+                        {new Date(session.created_at).toLocaleString("ru-RU")}
+                      </Link>
+                    </td>
+                    <td style={cellStyle}>
+                      <Link href={`/app/monitoring/${session.id}`}>{session.status}</Link>
+                    </td>
+                    <td style={cellStyle}>
+                      <Link href={`/app/monitoring/${session.id}`}>{session.stores?.name ?? "—"}</Link>
+                    </td>
+                    <td style={cellStyle}>
+                      <Link href={`/app/monitoring/${session.id}`}>{photoCounts.get(session.id) ?? 0}</Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>
