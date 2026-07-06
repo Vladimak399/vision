@@ -25,7 +25,7 @@ type ReviewMatch = {
   decision: string;
   is_active: boolean;
   catalog_products: {
-    external_sku: string;
+    external_sku: string | null;
     name: string;
     brand: string | null;
     size_text: string | null;
