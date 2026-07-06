@@ -3,6 +3,12 @@ import { cookies } from "next/headers";
 
 import { getPublicEnv } from "../env";
 
+type SupabaseCookie = {
+  name: string;
+  value: string;
+  options: Record<string, unknown>;
+};
+
 export async function createSupabaseServerClient() {
   const env = getPublicEnv();
   const cookieStore = await cookies();
@@ -10,12 +16,8 @@ export async function createSupabaseServerClient() {
   return createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
     cookies: {
       getAll: () => cookieStore.getAll(),
-      setAll: (cookiesToSet) => {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
-        } catch {
-          // Server Components cannot set cookies. Middleware/server actions can.
-        }
+      setAll: (items: SupabaseCookie[]) => {
+        void items;
       },
     },
   });
