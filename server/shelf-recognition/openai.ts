@@ -1,5 +1,6 @@
 import { getServerEnv } from "../../lib/env";
-import { estimateOcrCostMicrousd, getDefaultOcrModel } from "../ocr-cost";
+import { getAiRuntimeConfig } from "../ai-config";
+import { estimateOcrCostMicrousd } from "../ocr-cost";
 import type { ShelfRecognitionInput, ShelfRecognitionPayload, ShelfRecognitionResult } from "./types";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -103,7 +104,13 @@ export async function recognizeShelfPhotoWithOpenAI(input: ShelfRecognitionInput
     throw new Error("OPENAI_API_KEY is not configured.");
   }
 
-  const model = env.OPENAI_OCR_MODEL ?? getDefaultOcrModel();
+  const aiConfig = getAiRuntimeConfig();
+
+  if (aiConfig.vision.provider !== "openai") {
+    throw new Error(`Vision provider ${aiConfig.vision.provider} is not supported for shelf photo OCR yet.`);
+  }
+
+  const model = aiConfig.vision.model;
   const startedAt = Date.now();
   const imageUrl = getInputImageUrl(input);
 
