@@ -37,7 +37,15 @@ type RecognizedItem = {
   brand: string | null;
   size_text: string | null;
   price_minor: number | null;
+  old_price_minor: number | null;
+  promo_price_minor: number | null;
   currency: string;
+  confidence: number;
+  link_confidence: number | null;
+  price_tag_text: string | null;
+  product_visible_text: string | null;
+  review_reason: string | null;
+  position_hint: string | null;
   status: string;
   created_at: string;
   monitoring_photos: {
@@ -113,7 +121,9 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
 
   const { data: recognizedItems, error: recognizedItemsError } = await supabase
     .from("recognized_items")
-    .select("id, photo_id, raw_name, brand, size_text, price_minor, currency, status, created_at, monitoring_photos(storage_path)")
+    .select(
+      "id, photo_id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, status, created_at, monitoring_photos(storage_path)",
+    )
     .eq("company_id", companyId)
     .eq("session_id", session.id)
     .order("created_at", { ascending: false })
@@ -137,7 +147,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
   const recognitionJobSummary = getRecognitionJobSummary(recognitionJobs ?? []);
 
   return (
-    <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 960, padding: "0 1rem" }}>
+    <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 1120, padding: "0 1rem" }}>
       <header style={{ display: "grid", gap: "0.5rem" }}>
         <Link href="/app/monitoring">← Мониторинг</Link>
         <div>
@@ -148,9 +158,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
 
       <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem" }}>
         <h2 style={{ marginTop: 0 }}>Детали сессии</h2>
-        {photosError ? (
-          <p style={{ color: "#b45309" }}>Не удалось загрузить фото: {photosError.message}</p>
-        ) : null}
+        {photosError ? <p style={{ color: "#b45309" }}>Не удалось загрузить фото: {photosError.message}</p> : null}
         <dl style={{ display: "grid", gap: "0.75rem", margin: 0 }}>
           <DetailRow label="ID сессии" value={session.id} />
           <DetailRow label="Компания" value={membershipResult.membership.companyName} />
@@ -228,13 +236,21 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
           <p style={{ color: "#b45309", margin: 0 }}>Не удалось загрузить товары: {recognizedItemsError.message}</p>
         ) : recognizedItems && recognizedItems.length > 0 ? (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <table style={{ borderCollapse: "collapse", minWidth: 1200, width: "100%" }}>
               <thead>
                 <tr>
                   <th style={cellStyle}>Товар</th>
                   <th style={cellStyle}>Цена</th>
+                  <th style={cellStyle}>Старая</th>
+                  <th style={cellStyle}>Акция</th>
                   <th style={cellStyle}>Бренд</th>
                   <th style={cellStyle}>Размер</th>
+                  <th style={cellStyle}>Уверенность</th>
+                  <th style={cellStyle}>Связь</th>
+                  <th style={cellStyle}>Текст ценника</th>
+                  <th style={cellStyle}>Текст товара</th>
+                  <th style={cellStyle}>Проверка</th>
+                  <th style={cellStyle}>Место</th>
                   <th style={cellStyle}>Статус</th>
                   <th style={cellStyle}>Создан</th>
                   <th style={cellStyle}>Фото</th>
@@ -245,8 +261,16 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
                   <tr key={item.id}>
                     <td style={cellStyle}>{item.raw_name}</td>
                     <td style={cellStyle}>{formatPrice(item.price_minor, item.currency)}</td>
+                    <td style={cellStyle}>{formatPrice(item.old_price_minor, item.currency)}</td>
+                    <td style={cellStyle}>{formatPrice(item.promo_price_minor, item.currency)}</td>
                     <td style={cellStyle}>{item.brand || "—"}</td>
                     <td style={cellStyle}>{item.size_text || "—"}</td>
+                    <td style={cellStyle}>{formatConfidence(item.confidence)}</td>
+                    <td style={cellStyle}>{formatConfidence(item.link_confidence)}</td>
+                    <td style={cellStyle}>{item.price_tag_text || "—"}</td>
+                    <td style={cellStyle}>{item.product_visible_text || "—"}</td>
+                    <td style={cellStyle}>{item.review_reason || "—"}</td>
+                    <td style={cellStyle}>{item.position_hint || "—"}</td>
                     <td style={cellStyle}>{item.status}</td>
                     <td style={cellStyle}>{formatDateTime(item.created_at)}</td>
                     <td style={cellStyle}>{getRecognizedItemPhotoLabel(item)}</td>
@@ -266,7 +290,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
   );
 }
 
-const cellStyle = { borderBottom: "1px solid #e5e7eb", padding: "0.5rem", textAlign: "left" as const };
+const cellStyle = { borderBottom: "1px solid #e5e7eb", padding: "0.5rem", textAlign: "left" as const, verticalAlign: "top" as const };
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
@@ -321,6 +345,14 @@ function formatPrice(priceMinor: number | null, currency: string | null) {
   }
 
   return `${(priceMinor / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || "RUB"}`;
+}
+
+function formatConfidence(value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  return `${Math.round(value * 100)}%`;
 }
 
 function getPhotoStatusCounts(photos: MonitoringPhoto[]) {
