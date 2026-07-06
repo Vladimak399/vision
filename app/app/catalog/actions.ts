@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { createCatalogProduct } from "../../../server/catalog";
+import { CATALOG_WRITE_ROLES, hasCompanyRole, roleList } from "../../../server/company-access";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
 
 export type CatalogImportResult = {
@@ -106,6 +107,13 @@ export async function importCatalogAction(
   const membershipResult = await getPrimaryCompanyMembership();
   if (membershipResult.status !== "ok" || !membershipResult.membership) {
     return { ...initialImportResult, errors: ["Нет доступа к компании"] };
+  }
+
+  if (!hasCompanyRole(membershipResult.membership, CATALOG_WRITE_ROLES)) {
+    return {
+      ...initialImportResult,
+      errors: [`Недостаточно прав. Импортировать каталог могут только ${roleList(CATALOG_WRITE_ROLES)}.`],
+    };
   }
 
   const companyId = membershipResult.membership.companyId;
