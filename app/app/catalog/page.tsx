@@ -56,6 +56,9 @@ export default async function CatalogPage() {
         </p>
         <h1 style={{ margin: "0.5rem 0 0 0" }}>Каталог товаров</h1>
         <p style={{ color: "#64748b", marginTop: "0.25rem" }}>Компания: {membershipResult.membership.companyName}</p>
+        <Link href="/app/catalog/import" style={{ display: "inline-block", marginTop: "0.75rem", color: "#0ea5e9" }}>
+          Импорт каталога
+        </Link>
       </div>
 
       <section style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "1.5rem", background: "#f8fafc" }}>
