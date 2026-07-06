@@ -9,29 +9,20 @@ import { getPrimaryCompanyMembership } from "../../../../server/primary-membersh
 
 type ReviewStatus = "needs_review" | "confirmed" | "rejected";
 
-type ReviewActionResult = {
-  error?: string;
-};
-
 const REVIEW_ROLES = new Set(["admin", "manager", "reviewer"]);
 const REVIEW_STATUSES = new Set<ReviewStatus>(["needs_review", "confirmed", "rejected"]);
 
-export async function updateRecognizedItemStatus(formData: FormData): Promise<ReviewActionResult> {
+export async function updateRecognizedItemStatus(formData: FormData): Promise<void> {
   const auth = await getReviewAuth(formData);
-
-  if ("error" in auth) {
-    return { error: auth.error };
-  }
-
   const itemId = String(formData.get("item_id") ?? "").trim();
   const status = String(formData.get("status") ?? "").trim() as ReviewStatus;
 
   if (!itemId) {
-    return { error: "Не указан товар." };
+    throw new Error("Не указан товар.");
   }
 
   if (!REVIEW_STATUSES.has(status)) {
-    return { error: "Некорректный статус проверки." };
+    throw new Error("Некорректный статус проверки.");
   }
 
   const { supabase, companyId, sessionId } = auth;
@@ -43,29 +34,24 @@ export async function updateRecognizedItemStatus(formData: FormData): Promise<Re
     .eq("id", itemId);
 
   if (error) {
-    return { error: `Не удалось обновить статус: ${error.message}` };
+    throw new Error(`Не удалось обновить статус: ${error.message}`);
   }
 
   revalidatePath(`/app/monitoring/${sessionId}`);
-  return {};
+  revalidatePath(`/app/monitoring/${sessionId}/review`);
 }
 
-export async function updateRecognizedItem(formData: FormData): Promise<ReviewActionResult> {
+export async function updateRecognizedItem(formData: FormData): Promise<void> {
   const auth = await getReviewAuth(formData);
-
-  if ("error" in auth) {
-    return { error: auth.error };
-  }
-
   const itemId = String(formData.get("item_id") ?? "").trim();
   const rawName = String(formData.get("raw_name") ?? "").trim();
 
   if (!itemId) {
-    return { error: "Не указан товар." };
+    throw new Error("Не указан товар.");
   }
 
   if (!rawName) {
-    return { error: "Название товара не может быть пустым." };
+    throw new Error("Название товара не может быть пустым.");
   }
 
   const { supabase, companyId, sessionId } = auth;
@@ -89,11 +75,11 @@ export async function updateRecognizedItem(formData: FormData): Promise<ReviewAc
     .eq("id", itemId);
 
   if (error) {
-    return { error: `Не удалось сохранить правки: ${error.message}` };
+    throw new Error(`Не удалось сохранить правки: ${error.message}`);
   }
 
   revalidatePath(`/app/monitoring/${sessionId}`);
-  return {};
+  revalidatePath(`/app/monitoring/${sessionId}/review`);
 }
 
 async function getReviewAuth(formData: FormData) {
@@ -106,22 +92,22 @@ async function getReviewAuth(formData: FormData) {
   }
 
   if (!sessionId) {
-    return { error: "Не указана сессия мониторинга." };
+    throw new Error("Не указана сессия мониторинга.");
   }
 
   let membershipResult;
   try {
     membershipResult = await getPrimaryCompanyMembership();
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Не удалось проверить доступ к компании." };
+    throw new Error(error instanceof Error ? error.message : "Не удалось проверить доступ к компании.");
   }
 
   if (membershipResult.status !== "ok") {
-    return { error: "Нет доступа к компании." };
+    throw new Error("Нет доступа к компании.");
   }
 
   if (!REVIEW_ROLES.has(membershipResult.membership.role)) {
-    return { error: "Нет прав на проверку распознанных товаров." };
+    throw new Error("Нет прав на проверку распознанных товаров.");
   }
 
   const companyId = membershipResult.membership.companyId;
@@ -134,15 +120,15 @@ async function getReviewAuth(formData: FormData) {
     .maybeSingle();
 
   if (sessionError) {
-    return { error: `Не удалось проверить сессию: ${sessionError.message}` };
+    throw new Error(`Не удалось проверить сессию: ${sessionError.message}`);
   }
 
   if (!session) {
-    return { error: "Сессия не найдена в текущей компании." };
+    throw new Error("Сессия не найдена в текущей компании.");
   }
 
   if (["completed", "cancelled"].includes(String(session.status))) {
-    return { error: "Нельзя править завершённую или отменённую сессию." };
+    throw new Error("Нельзя править завершённую или отменённую сессию.");
   }
 
   return { supabase, companyId, sessionId };
