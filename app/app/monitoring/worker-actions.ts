@@ -36,7 +36,8 @@ export type ProcessQueueState = {
   message?: string;
 };
 
-const OCR_BATCH_SIZE = 1;
+const DEFAULT_OCR_BATCH_SIZE = 1;
+const MAX_OCR_BATCH_SIZE = 10;
 const MONITORING_PHOTOS_BUCKET = "monitoring-photos";
 
 export async function processQueuedRecognitionJobs(
@@ -44,6 +45,7 @@ export async function processQueuedRecognitionJobs(
   formData: FormData,
 ): Promise<ProcessQueueState> {
   const sessionId = String(formData.get("session_id") ?? "").trim();
+  const batchSize = parseBatchSize(formData.get("batch_size"));
   const nextPath = sessionId ? `/app/monitoring/${encodeURIComponent(sessionId)}` : "/app/monitoring";
   const user = await getCurrentUser();
 
@@ -105,7 +107,7 @@ export async function processQueuedRecognitionJobs(
     .eq("status", "queued")
     .lte("run_after", new Date().toISOString())
     .order("created_at", { ascending: true })
-    .limit(OCR_BATCH_SIZE)
+    .limit(batchSize)
     .returns<QueueJobRow[]>();
 
   if (jobsError) {
@@ -133,7 +135,8 @@ export async function processQueuedRecognitionJobs(
 
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
-  return { message: `Распознавание: успешно ${processed}, ошибок ${failed}.` };
+  revalidatePath(`/app/monitoring/${sessionId}/review`);
+  return { message: `Пачка ${jobs.length} фото: успешно ${processed}, ошибок ${failed}.` };
 }
 
 async function processOneRecognitionJob({
@@ -349,6 +352,16 @@ function inferMimeType(path: string) {
   }
 
   return "image/jpeg";
+}
+
+function parseBatchSize(value: FormDataEntryValue | null) {
+  const parsed = Number(String(value ?? "").trim());
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_OCR_BATCH_SIZE;
+  }
+
+  return Math.max(1, Math.min(MAX_OCR_BATCH_SIZE, Math.floor(parsed)));
 }
 
 async function moveSessionToReviewIfReady(
