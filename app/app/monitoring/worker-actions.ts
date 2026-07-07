@@ -40,7 +40,8 @@ export type ProcessQueueState = {
   message?: string;
 };
 
-const OCR_BATCH_SIZE = 10;
+const DEFAULT_OCR_BATCH_SIZE = 10;
+const MAX_OCR_BATCH_SIZE = 10;
 const MONITORING_PHOTOS_BUCKET = "monitoring-photos";
 
 export async function processQueuedRecognitionJobs(
@@ -48,6 +49,7 @@ export async function processQueuedRecognitionJobs(
   formData: FormData,
 ): Promise<ProcessQueueState> {
   const sessionId = String(formData.get("session_id") ?? "").trim();
+  const ocrLimit = parseOcrLimit(formData.get("ocr_limit"));
   const nextPath = sessionId ? `/app/monitoring/${encodeURIComponent(sessionId)}` : "/app/monitoring";
   const user = await getCurrentUser();
 
@@ -108,7 +110,7 @@ export async function processQueuedRecognitionJobs(
     .eq("status", "queued")
     .lte("run_after", new Date().toISOString())
     .order("created_at", { ascending: true })
-    .limit(OCR_BATCH_SIZE)
+    .limit(ocrLimit)
     .returns<QueueJobRow[]>();
 
   if (jobsError) {
@@ -140,7 +142,7 @@ export async function processQueuedRecognitionJobs(
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
   revalidatePath(`/app/monitoring/${sessionId}/review`);
-  return { message: `Обработана пачка: успешно ${processed}, ошибок ${failed}, пропущено ${skipped}.` };
+  return { message: `Обработано фото: успешно ${processed}, ошибок ${failed}, пропущено ${skipped}. Лимит запуска: ${ocrLimit}.` };
 }
 
 async function processOneRecognitionJob({
@@ -400,4 +402,14 @@ async function markJobFailed(
     .update({ status: "failed", error })
     .eq("company_id", companyId)
     .eq("id", jobId);
+}
+
+function parseOcrLimit(value: FormDataEntryValue | null) {
+  const parsed = Number(String(value ?? ""));
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_OCR_BATCH_SIZE;
+  }
+
+  return Math.min(Math.floor(parsed), MAX_OCR_BATCH_SIZE);
 }
