@@ -22,6 +22,8 @@ const initialImportResult: CatalogImportResult = {
   errors: [],
 };
 
+const EXISTING_SKU_LOOKUP_BATCH_SIZE = 100;
+
 type ImportRow = Record<string, unknown>;
 
 function normalizeHeader(value: string): string {
@@ -150,17 +152,22 @@ export async function importCatalogAction(
     };
   }
 
-  const skus = rows
-    .map((row) => valueAsString(row, ["external_sku", "sku", "артикул"]))
-    .filter((sku): sku is string => Boolean(sku));
+  const skus = Array.from(
+    new Set(
+      rows
+        .map((row) => valueAsString(row, ["external_sku", "sku", "артикул"]))
+        .filter((sku): sku is string => Boolean(sku)),
+    ),
+  );
   const existingSkus = new Set<string>();
 
-  if (skus.length > 0) {
+  for (let index = 0; index < skus.length; index += EXISTING_SKU_LOOKUP_BATCH_SIZE) {
+    const skuBatch = skus.slice(index, index + EXISTING_SKU_LOOKUP_BATCH_SIZE);
     const { data: existingProducts, error: existingError } = await supabase
       .from("catalog_products")
       .select("external_sku")
       .eq("company_id", companyId)
-      .in("external_sku", skus);
+      .in("external_sku", skuBatch);
 
     if (existingError) {
       return {
