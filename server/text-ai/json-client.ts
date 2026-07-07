@@ -36,6 +36,9 @@ type ChatCompletionsResponse = {
 };
 
 const DEFAULT_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const FALLBACK_STATUSES = new Set([429, 503]);
+const MAX_ATTEMPTS = 3;
 
 export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Promise<TextAiJsonResult<T>> {
   const aiConfig = getAiRuntimeConfig();
@@ -44,15 +47,36 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
     throw new Error("Text AI provider is disabled.");
   }
 
-  const apiKey = process.env.AI_TEXT_API_KEY || getProviderApiKey(aiConfig.text.provider);
-  const baseUrl = process.env.AI_TEXT_BASE_URL || getProviderBaseUrl(aiConfig.text.provider);
+  const models = [aiConfig.text.model];
+  if (aiConfig.text.provider === "gemini" && aiConfig.fallback.provider === "gemini" && aiConfig.fallback.model !== aiConfig.text.model) {
+    models.push(aiConfig.fallback.model);
+  }
+
+  let lastError: unknown;
+  for (const [index, model] of models.entries()) {
+    try {
+      return await runTextAiJsonWithModel<T>({ provider: aiConfig.text.provider, model, system, user });
+    } catch (error) {
+      lastError = error;
+      const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : null;
+      if (index === 0 && FALLBACK_STATUSES.has(status ?? 0) && models.length > 1) continue;
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Text AI request failed.");
+}
+
+async function runTextAiJsonWithModel<T>({ provider, model, system, user }: { provider: string; model: string; system: string; user: string }): Promise<TextAiJsonResult<T>> {
+  const apiKey = process.env.AI_TEXT_API_KEY || getProviderApiKey(provider);
+  const baseUrl = process.env.AI_TEXT_BASE_URL || getProviderBaseUrl(provider);
 
   if (!apiKey) {
-    throw new Error("Text AI API key is not configured.");
+    throw new Error(provider === "gemini" ? "GEMINI_API_KEY не настроен. Добавьте переменную в Vercel Environment Variables." : "Text AI API key is not configured.");
   }
 
   if (!baseUrl) {
-    throw new Error("AI_TEXT_BASE_URL is not configured.");
+    throw new Error("AI-провайдер отключен или не поддерживается. Проверьте AI_VISION_PROVIDER и AI_TEXT_PROVIDER.");
   }
 
   const endpoint = new URL("chat/completions", ensureTrailingSlash(baseUrl));
@@ -61,41 +85,40 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
     { role: "user", content: user },
   ];
 
-  const response = await fetch(endpoint.toString(), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: aiConfig.text.model,
-      messages,
-      response_format: { type: "json_object" },
-      temperature: 0,
-    }),
-  });
+  let body: ChatCompletionsResponse | null = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const response = await fetch(endpoint.toString(), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages, response_format: { type: "json_object" }, temperature: 0 }),
+    });
 
-  const body = (await response.json().catch(() => null)) as ChatCompletionsResponse | null;
+    body = (await response.json().catch(() => null)) as ChatCompletionsResponse | null;
+    if (response.ok) break;
 
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `Text AI request failed with status ${response.status}.`);
+    const error = toTextAiHttpError(response.status, body?.error?.message);
+    if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_ATTEMPTS) throw error;
+    await sleep(250 * 2 ** (attempt - 1));
   }
 
   const content = body?.choices?.[0]?.message?.content;
-
-  if (!content) {
-    throw new Error("Text AI response did not contain message content.");
-  }
+  if (!content) throw new Error("Text AI response did not contain message content.");
 
   return {
     data: JSON.parse(content) as T,
-    usage: {
-      provider: aiConfig.text.provider,
-      model: aiConfig.text.model,
-      input_tokens: body?.usage?.prompt_tokens ?? 0,
-      output_tokens: body?.usage?.completion_tokens ?? 0,
-    },
+    usage: { provider, model, input_tokens: body?.usage?.prompt_tokens ?? 0, output_tokens: body?.usage?.completion_tokens ?? 0 },
   };
+}
+
+function toTextAiHttpError(status: number, message: string | undefined) {
+  const safeMessage = status === 429 ? "Превышен лимит Gemini API. Подождите и повторите запрос." : status === 503 ? "Gemini временно перегружен. Повторите позже или переключите модель в Vercel." : message || `Text AI request failed with status ${status}.`;
+  const error = new Error(safeMessage) as Error & { status?: number };
+  error.status = status;
+  return error;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getProviderApiKey(provider: string) {

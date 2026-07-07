@@ -67,7 +67,7 @@ function VisionResult({ result }: { result: VisionOk }) {
           </thead>
           <tbody>
             {result.items.length === 0 ? (
-              <tr><td colSpan={6} style={cellStyle}>Распознанные позиции не найдены.</td></tr>
+              <tr><td colSpan={6} style={cellStyle}>Распознанные позиции не найдены.{result.warnings.length > 0 ? " Модель не смогла прочитать товары/ценники. Для теста загрузите оригинальное фото, не скриншот, ближе к полке, чтобы ценники читались глазами." : ""}</td></tr>
             ) : result.items.map((item, index) => (
               <tr key={`${item.raw_name ?? "item"}-${index}`}>
                 <td style={cellStyle}>{item.raw_name ?? "—"}</td>

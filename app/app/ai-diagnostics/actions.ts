@@ -51,12 +51,12 @@ export async function runTextAiSmokeTest(): Promise<TextSmokeResult> {
   try {
     await ensureAiDiagnosticsAccess();
 
-    const result = await runTextAiJson<{ ok: boolean; provider: string; model: string; message: string }>({
+    const result = await runTextAiJson<{ ok: boolean; message: string }>({
       system: "Return only strict JSON. Do not include markdown or extra text.",
-      user: 'Return JSON exactly matching this shape: {"ok":true,"provider":"...","model":"...","message":"..."}. Use the configured provider/model names if available in your context, otherwise describe yourself briefly in message.',
+      user: 'Return JSON exactly matching this shape: {"ok":true,"message":"Короткая проверка связи выполнена"}. Do not include provider or model names.',
     });
 
-    return { ok: true, data: { response: result.data, usage: result.usage } };
+    return { ok: true, data: { response: { ...result.data, provider: result.usage.provider, model: result.usage.model }, usage: result.usage } };
   } catch (error) {
     return { ok: false, error: toSafeAiError(error, "Не удалось выполнить проверку text AI.") };
   }
