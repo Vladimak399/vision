@@ -4,16 +4,18 @@ import { LoginForm } from "./login-form";
 
 export default function LoginPage() {
   return (
-    <main style={{ display: "grid", gap: "1rem", margin: "4rem auto", maxWidth: 480, padding: "0 1rem" }}>
-      <div>
-        <p style={{ margin: 0, textTransform: "uppercase" }}>PriceVision</p>
-        <h1>Вход</h1>
-        <p>Используй email/password пользователя из Supabase Auth.</p>
-      </div>
-
-      <Suspense fallback={<p>Загружаем форму входа...</p>}>
-        <LoginForm />
-      </Suspense>
+    <main className="page page-narrow">
+      <section className="card">
+        <p className="eyebrow">PriceVision</p>
+        <h1>Вход в рабочую область</h1>
+        <p className="lead">
+          Войдите под рабочим email. После входа откроется нужный раздел
+          мониторинга или каталог.
+        </p>
+        <Suspense fallback={<p className="muted">Загружаем форму входа…</p>}>
+          <LoginForm />
+        </Suspense>
+      </section>
     </main>
   );
 }
