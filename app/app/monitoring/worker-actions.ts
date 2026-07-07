@@ -5,11 +5,10 @@ import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { getServerEnv } from "../../../lib/env";
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { getCurrentUser } from "../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
-import { recognizeShelfPhotoWithOpenAI } from "../../../server/shelf-recognition/openai";
+import { getShelfRecognitionMissingKeyMessage, hasShelfRecognitionKey, recognizeShelfPhoto } from "../../../server/shelf-recognition";
 import type { ShelfRecognitionItem } from "../../../server/shelf-recognition/types";
 
 type QueueJobPayload = {
@@ -75,9 +74,8 @@ export async function processQueuedRecognitionJobs(
     return { error: "Не указана сессия мониторинга." };
   }
 
-  const env = getServerEnv();
-  if (!env.OPENAI_API_KEY) {
-    return { error: "Ключ распознавания не настроен. Очередь и фото не изменены." };
+  if (!hasShelfRecognitionKey()) {
+    return { error: `${getShelfRecognitionMissingKeyMessage()} Очередь и фото не изменены.` };
   }
 
   const companyId = membershipResult.membership.companyId;
@@ -219,7 +217,7 @@ async function processOneRecognitionJob({
 
   try {
     const image = await loadPhotoAsBase64(supabase, photo.storage_path);
-    const recognition = await recognizeShelfPhotoWithOpenAI(image);
+    const recognition = await recognizeShelfPhoto(image);
     const rows = buildRecognizedItemRows({ companyId, sessionId, photoId, items: recognition.items });
 
     if (rows.length > 0) {
