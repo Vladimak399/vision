@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "../../../../server/auth";
+import { getRecentCatalogImports } from "../../../../server/catalog";
 import { CATALOG_WRITE_ROLES, hasCompanyRole, roleList } from "../../../../server/company-access";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 import { CatalogImportForm } from "./import-form";
@@ -21,6 +22,14 @@ export default async function CatalogImportPage() {
   }
 
   const canManageCatalog = hasCompanyRole(membershipResult.membership, CATALOG_WRITE_ROLES);
+  let recentImports: Awaited<ReturnType<typeof getRecentCatalogImports>> = [];
+  let importsError: string | null = null;
+
+  try {
+    recentImports = await getRecentCatalogImports(membershipResult.membership.companyId, 5);
+  } catch (error) {
+    importsError = error instanceof Error ? error.message : "Не удалось загрузить историю импортов";
+  }
 
   return (
     <main style={{ display: "grid", gap: "1.5rem", margin: "2rem auto", maxWidth: 960, padding: "0 1rem" }}>
@@ -63,6 +72,40 @@ export default async function CatalogImportPage() {
           </section>
 
           <CatalogImportForm />
+
+          <section style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "1.5rem", background: "#f8fafc" }}>
+            <h2 style={{ marginTop: 0 }}>Последние импорты</h2>
+            {importsError ? (
+              <p style={{ color: "#b45309", marginBottom: 0 }}>{importsError}</p>
+            ) : recentImports.length === 0 ? (
+              <p style={{ color: "#64748b", marginBottom: 0 }}>Импортов пока нет.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ padding: "0.5rem", textAlign: "left" }}>Файл</th>
+                      <th style={{ padding: "0.5rem", textAlign: "left" }}>Статус</th>
+                      <th style={{ padding: "0.5rem", textAlign: "left" }}>Строк</th>
+                      <th style={{ padding: "0.5rem", textAlign: "left" }}>Ошибок</th>
+                      <th style={{ padding: "0.5rem", textAlign: "left" }}>Создан</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentImports.map((item) => (
+                      <tr key={item.id} style={{ borderTop: "1px solid #e2e8f0" }}>
+                        <td style={{ padding: "0.5rem" }}>{item.filename}</td>
+                        <td style={{ padding: "0.5rem" }}>{item.status}</td>
+                        <td style={{ padding: "0.5rem" }}>{item.rowCount ?? "—"}</td>
+                        <td style={{ padding: "0.5rem" }}>{item.errorCount ?? "—"}</td>
+                        <td style={{ padding: "0.5rem" }}>{new Date(item.createdAt).toLocaleString("ru-RU")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </>
       )}
     </main>

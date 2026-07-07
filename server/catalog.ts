@@ -17,6 +17,29 @@ export type CatalogProduct = {
   updatedBy: string | null;
 };
 
+export type CatalogProductSearchParams = {
+  q?: string;
+  price?: "missing" | "present";
+  page?: number;
+  pageSize?: number;
+};
+
+export type CatalogProductSearchResult = {
+  products: CatalogProduct[];
+  totalCount: number | null;
+  page: number;
+  pageSize: number;
+};
+
+export type CatalogImportSummary = {
+  id: string;
+  filename: string;
+  status: string;
+  rowCount: number | null;
+  errorCount: number | null;
+  createdAt: string;
+};
+
 type CatalogProductRow = {
   id: string;
   company_id: string;
@@ -31,6 +54,15 @@ type CatalogProductRow = {
   updated_at: string;
   created_by: string | null;
   updated_by: string | null;
+};
+
+type CatalogImportRow = {
+  id: string;
+  filename: string;
+  status: string;
+  row_count: number | null;
+  error_count: number | null;
+  created_at: string;
 };
 
 function toCatalogProduct(row: CatalogProductRow): CatalogProduct {
@@ -51,21 +83,77 @@ function toCatalogProduct(row: CatalogProductRow): CatalogProduct {
   };
 }
 
-export async function getCatalogProducts(companyId: string): Promise<CatalogProduct[]> {
-  const supabase = await createSupabaseServerClient();
+function escapeIlike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
 
-  const { data, error } = await supabase
+export async function getCatalogProducts(
+  companyId: string,
+  params: CatalogProductSearchParams = {},
+): Promise<CatalogProductSearchResult> {
+  const supabase = await createSupabaseServerClient();
+  const pageSize = Math.min(Math.max(params.pageSize ?? 50, 1), 100);
+  const page = Math.max(params.page ?? 1, 1);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const q = params.q?.trim();
+
+  let query = supabase
     .from("catalog_products")
-    .select("*")
-    .eq("company_id", companyId)
+    .select("*", { count: "exact" })
+    .eq("company_id", companyId);
+
+  if (q) {
+    const pattern = `*${escapeIlike(q)}*`;
+    query = query.or(`external_sku.ilike.${pattern},name.ilike.${pattern},brand.ilike.${pattern},size_text.ilike.${pattern}`);
+  }
+
+  if (params.price === "missing") {
+    query = query.is("own_price_minor", null);
+  } else if (params.price === "present") {
+    query = query.not("own_price_minor", "is", null);
+  }
+
+  const { data, error, count } = await query
     .order("created_at", { ascending: false })
+    .range(from, to)
     .returns<CatalogProductRow[]>();
 
   if (error) {
     throw new Error(`Failed to load catalog products: ${error.message}`);
   }
 
-  return (data ?? []).map(toCatalogProduct);
+  return {
+    products: (data ?? []).map(toCatalogProduct),
+    totalCount: count,
+    page,
+    pageSize,
+  };
+}
+
+export async function getRecentCatalogImports(companyId: string, limit = 5): Promise<CatalogImportSummary[]> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("catalog_imports")
+    .select("id, filename, status, row_count, error_count, created_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(limit)
+    .returns<CatalogImportRow[]>();
+
+  if (error) {
+    throw new Error(`Failed to load catalog imports: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    filename: row.filename,
+    status: row.status,
+    rowCount: row.row_count,
+    errorCount: row.error_count,
+    createdAt: row.created_at,
+  }));
 }
 
 export async function createCatalogProduct(
