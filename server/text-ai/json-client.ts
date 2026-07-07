@@ -35,6 +35,8 @@ type ChatCompletionsResponse = {
   };
 };
 
+const DEFAULT_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+
 export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Promise<TextAiJsonResult<T>> {
   const aiConfig = getAiRuntimeConfig();
 
@@ -43,7 +45,7 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
   }
 
   const apiKey = process.env.AI_TEXT_API_KEY || getProviderApiKey(aiConfig.text.provider);
-  const baseUrl = process.env.AI_TEXT_BASE_URL;
+  const baseUrl = process.env.AI_TEXT_BASE_URL || getProviderBaseUrl(aiConfig.text.provider);
 
   if (!apiKey) {
     throw new Error("Text AI API key is not configured.");
@@ -103,6 +105,18 @@ function getProviderApiKey(provider: string) {
 
   if (provider === "deepseek") {
     return process.env.DEEPSEEK_API_KEY;
+  }
+
+  if (provider === "gemini") {
+    return process.env.GEMINI_API_KEY;
+  }
+
+  return null;
+}
+
+function getProviderBaseUrl(provider: string) {
+  if (provider === "gemini") {
+    return DEFAULT_GEMINI_OPENAI_BASE_URL;
   }
 
   return null;
