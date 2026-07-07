@@ -25,10 +25,10 @@ export function getShelfRecognitionMissingKeyMessage() {
   }
 
   if (aiConfig.vision.provider === "gemini") {
-    return "GEMINI_API_KEY is not configured.";
+    return "GEMINI_API_KEY не настроен. Добавьте переменную в Vercel Environment Variables.";
   }
 
-  return `Vision provider ${aiConfig.vision.provider} is disabled or unsupported.`;
+  return `Vision provider ${aiConfig.vision.provider} отключен или не поддерживается.`;
 }
 
 export async function recognizeShelfPhoto(input: ShelfRecognitionInput): Promise<ShelfRecognitionResult> {
@@ -42,5 +42,5 @@ export async function recognizeShelfPhoto(input: ShelfRecognitionInput): Promise
     return recognizeShelfPhotoWithGemini(input);
   }
 
-  throw new Error(`Vision provider ${aiConfig.vision.provider} is disabled or unsupported.`);
+  throw new Error(`Vision provider ${aiConfig.vision.provider} отключен или не поддерживается.`);
 }
