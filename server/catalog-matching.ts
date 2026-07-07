@@ -112,11 +112,11 @@ const BRAND_ALIASES: Record<string, string> = {
   bucheron: "bucheron",
   бушерон: "bucheron",
   babyfox: "babyfox",
-  "бебифокс": "babyfox",
-  "бэйбифокс": "babyfox",
+  бебифокс: "babyfox",
+  бэйбифокс: "babyfox",
   vitabar: "vitabar",
   vita: "vita",
-  "вита": "vita",
+  вита: "vita",
 };
 
 export function getCatalogMatchCandidates(
@@ -219,11 +219,14 @@ export function normalizeText(value: string) {
 }
 
 export function tokenizeForMatch(value: string) {
-  return normalizeText(value)
+  const tokens = normalizeText(value)
     .split(" ")
     .map((token) => BRAND_ALIASES[token] ?? token)
     .filter((token) => token.length > 1)
+    .filter((token) => !/^\d+$/.test(token))
     .filter((token) => !STOP_WORDS.has(token));
+
+  return Array.from(new Set(tokens));
 }
 
 export function normalizeSize(value: string) {
