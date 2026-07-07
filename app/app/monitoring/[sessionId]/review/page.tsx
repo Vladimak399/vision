@@ -11,6 +11,7 @@ import { RecognizedItemReviewControls } from "../recognized-item-review-controls
 
 type ReviewDepartmentFilter = "all" | "products" | "chemistry" | "none";
 type ReviewCandidateFilter = "all" | "with_candidate" | "without_candidate";
+type ReviewStatusFilter = "all" | "todo" | "ready" | "problem";
 
 type ReviewPageProps = {
   params: Promise<{
@@ -19,6 +20,7 @@ type ReviewPageProps = {
   searchParams?: Promise<{
     department?: string;
     candidates?: string;
+    status?: string;
   }>;
 };
 
@@ -89,11 +91,19 @@ const departmentFilters: Array<{ key: ReviewDepartmentFilter; label: string }> =
 
 const REVIEW_STATUSES = ["recognized", "needs_review", "matched", "confirmed", "unmatched", "rejected"];
 
+const statusFilters: Array<{ key: ReviewStatusFilter; label: string; description: string }> = [
+  { key: "todo", label: "К проверке", description: "Распознано и На проверке" },
+  { key: "all", label: "Все", description: "Без фильтра по статусу" },
+  { key: "ready", label: "Готовые", description: "Сопоставлено, OCR подтверждён или Нет в ассортименте" },
+  { key: "problem", label: "Проблемные", description: "Ошибка OCR или строки без кандидатов" },
+];
+
 export default async function RecognizedItemsReviewPage({ params, searchParams }: ReviewPageProps) {
   const { sessionId } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const departmentFilter = parseDepartmentFilter(resolvedSearchParams.department);
   const candidateFilter = parseCandidateFilter(resolvedSearchParams.candidates);
+  const statusFilter = parseStatusFilter(resolvedSearchParams.status);
   const user = await getCurrentUser();
 
   if (!user) {
@@ -162,10 +172,11 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
     .returns<ReviewCatalogProduct[]>();
 
   const suggestionsByItemId = buildSuggestionsByItemId(items ?? [], catalogProducts ?? []);
-  const visibleItems = filterItemsByCandidates(items ?? [], suggestionsByItemId, candidateFilter);
+  const visibleItems = sortItemsForReview(filterItemsByStatus(filterItemsByCandidates(items ?? [], suggestionsByItemId, candidateFilter), suggestionsByItemId, statusFilter));
   const counts = getStatusCounts(items ?? []);
   const needsReviewCount = (counts.recognized ?? 0) + (counts.needs_review ?? 0);
   const readyCount = (counts.matched ?? 0) + (counts.confirmed ?? 0) + (counts.unmatched ?? 0);
+  const withoutCandidateCount = countItemsWithoutCandidates(items ?? [], suggestionsByItemId);
 
   return (
     <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 1120, padding: "0 1rem" }}>
@@ -179,7 +190,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
           {departmentFilters.map((filter) => (
             <Link
               key={filter.key}
-              href={getDepartmentHref(sessionId, filter.key)}
+              href={getReviewHref(sessionId, { department: filter.key, candidates: candidateFilter, status: statusFilter })}
               style={{
                 border: "1px solid #d1d5db",
                 borderRadius: 999,
@@ -200,12 +211,30 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
           ].map((filter) => (
             <Link
               key={filter.key}
-              href={getCandidateHref(sessionId, departmentFilter, filter.key as ReviewCandidateFilter)}
+              href={getReviewHref(sessionId, { department: departmentFilter, candidates: filter.key as ReviewCandidateFilter, status: statusFilter })}
               style={{
                 border: "1px solid #d1d5db",
                 borderRadius: 999,
                 padding: "0.25rem 0.5rem",
                 fontWeight: filter.key === candidateFilter ? 700 : 400,
+              }}
+            >
+              {filter.label}
+            </Link>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+          {statusFilters.map((filter) => (
+            <Link
+              key={filter.key}
+              href={getReviewHref(sessionId, { department: departmentFilter, candidates: candidateFilter, status: filter.key })}
+              title={filter.description}
+              style={{
+                border: "1px solid #d1d5db",
+                borderRadius: 999,
+                padding: "0.25rem 0.5rem",
+                fontWeight: filter.key === statusFilter ? 700 : 400,
               }}
             >
               {filter.label}
@@ -224,7 +253,10 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
       <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb" }}>
         <strong>Готовность к выгрузке</strong>
         <p style={{ margin: "0.35rem 0 0", color: "#4b5563" }}>
-          Готово: {readyCount}. Требует проверки: {needsReviewCount}. Нет в ассортименте считается только по явному статусу “Нет в ассортименте”. Отсутствие match не считается отсутствием товара.
+          Готово: {readyCount}. Требует проверки: {needsReviewCount}. Без кандидатов: {withoutCandidateCount}. Сейчас показано: {visibleItems.length}. Нет в ассортименте считается только по явному статусу “Нет в ассортименте”. Отсутствие match не считается отсутствием товара.
+        </p>
+        <p style={{ margin: "0.35rem 0 0", color: "#4b5563" }}>
+          Рекомендуемый порядок работы: фильтр “К проверке” → принять точные совпадения → исправить OCR → только вручную отметить “Нет в ассортименте”, если товара действительно нет в каталоге.
         </p>
         {catalogProductsError ? <p style={{ color: "#b45309", margin: "0.5rem 0 0" }}>Подсказки каталога недоступны: {catalogProductsError.message}</p> : null}
       </section>
@@ -369,6 +401,10 @@ function parseCandidateFilter(value: string | undefined): ReviewCandidateFilter 
   return value === "with_candidate" || value === "without_candidate" ? value : "all";
 }
 
+function parseStatusFilter(value: string | undefined): ReviewStatusFilter {
+  return value === "all" || value === "ready" || value === "problem" ? value : "todo";
+}
+
 function filterItemsByCandidates(items: ReviewItem[], suggestionsByItemId: Map<string, ReviewCatalogSuggestion[]>, filter: ReviewCandidateFilter) {
   if (filter === "all") return items;
   return items.filter((item) => {
@@ -379,17 +415,43 @@ function filterItemsByCandidates(items: ReviewItem[], suggestionsByItemId: Map<s
   });
 }
 
-function getCandidateHref(sessionId: string, department: ReviewDepartmentFilter, candidates: ReviewCandidateFilter) {
-  const params = new URLSearchParams();
-  if (department !== "all") params.set("department", department);
-  if (candidates !== "all") params.set("candidates", candidates);
-  const query = params.toString();
-  return `/app/monitoring/${sessionId}/review${query ? `?${query}` : ""}`;
+function filterItemsByStatus(items: ReviewItem[], suggestionsByItemId: Map<string, ReviewCatalogSuggestion[]>, filter: ReviewStatusFilter) {
+  if (filter === "all") return items;
+  if (filter === "todo") return items.filter((item) => item.status === "recognized" || item.status === "needs_review");
+  if (filter === "ready") return items.filter((item) => item.status === "matched" || item.status === "confirmed" || item.status === "unmatched");
+
+  return items.filter((item) => item.status === "rejected" || !hasCandidate(item, suggestionsByItemId));
 }
 
-function getDepartmentHref(sessionId: string, department: ReviewDepartmentFilter) {
-  const baseHref = `/app/monitoring/${sessionId}/review`;
-  return department === "all" ? baseHref : `${baseHref}?department=${department}`;
+function sortItemsForReview(items: ReviewItem[]) {
+  return [...items].sort((left, right) => getReviewPriority(left) - getReviewPriority(right) || new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
+}
+
+function getReviewPriority(item: ReviewItem) {
+  if (item.status === "needs_review") return 0;
+  if (item.status === "recognized") return 1;
+  if (item.status === "rejected") return 2;
+  if (item.status === "matched") return 3;
+  if (item.status === "confirmed") return 4;
+  if (item.status === "unmatched") return 5;
+  return 6;
+}
+
+function countItemsWithoutCandidates(items: ReviewItem[], suggestionsByItemId: Map<string, ReviewCatalogSuggestion[]>) {
+  return items.filter((item) => !hasCandidate(item, suggestionsByItemId)).length;
+}
+
+function hasCandidate(item: ReviewItem, suggestionsByItemId: Map<string, ReviewCatalogSuggestion[]>) {
+  return Boolean(getActiveMatch(item.matches)) || (suggestionsByItemId.get(item.id)?.length ?? 0) > 0;
+}
+
+function getReviewHref(sessionId: string, filters: { department: ReviewDepartmentFilter; candidates: ReviewCandidateFilter; status: ReviewStatusFilter }) {
+  const params = new URLSearchParams();
+  if (filters.department !== "all") params.set("department", filters.department);
+  if (filters.candidates !== "all") params.set("candidates", filters.candidates);
+  if (filters.status !== "todo") params.set("status", filters.status);
+  const query = params.toString();
+  return `/app/monitoring/${sessionId}/review${query ? `?${query}` : ""}`;
 }
 
 function getDepartmentLabel(value: string | null) {
