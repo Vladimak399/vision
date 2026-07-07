@@ -15,13 +15,18 @@ export function ProcessQueueForm({ sessionId }: { sessionId: string }) {
 
   return (
     <div style={{ display: "grid", gap: "0.5rem" }}>
-      <form action={formAction} style={{ display: "grid", gap: "0.5rem" }}>
+      <form action={formAction} style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
         <input type="hidden" name="session_id" value={sessionId} />
-        <button type="submit" disabled={isPending}>
-          {isPending ? "Идет обработка..." : "Обработать следующую пачку"}
+        <button type="submit" name="ocr_limit" value="1" disabled={isPending}>
+          {isPending ? "Идет обработка..." : "Тест: 1 фото"}
+        </button>
+        <button type="submit" name="ocr_limit" value="10" disabled={isPending}>
+          {isPending ? "Идет обработка..." : "Обработать пачку"}
         </button>
       </form>
-      <p style={{ color: "#4b5563", margin: 0 }}>Берёт из очереди до 10 фото. Для большого магазина нажимай повторно, пока queued не станет 0.</p>
+      <p style={{ color: "#4b5563", margin: 0 }}>
+        Сначала запускай тест на 1 фото. Если распознавание нормальное, запускай пачку до 10 фото и повторяй, пока queued не станет 0.
+      </p>
       {state.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{state.error}</p> : null}
       {state.message ? <p style={{ color: "#047857", margin: 0 }}>{state.message}</p> : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
