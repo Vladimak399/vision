@@ -205,5 +205,5 @@ async function findCatalogProduct({
 }
 
 function escapeLike(value: string) {
-  return value.replace(/[\%_]/g, (symbol) => `\${symbol}`);
+  return value.replace(/[\%_]/g, (match: string) => `\\${match}`);
 }
