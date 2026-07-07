@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "../lib/supabase/server";
-import { buildCatalogMatchKey, getCatalogMatchCandidates, type CatalogMatchProduct } from "./catalog-matching";
+import { buildCatalogMatchKey, getCatalogMatchCandidates, type CatalogMatchProduct, type RecognizedMatchInput } from "./catalog-matching";
 import { getAliasProductMap } from "./match-aliases";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -72,21 +72,12 @@ export async function autoMatchRecognizedItems({
   const aliasMap = await getAliasProductMap({ companyId, items, supabase });
 
   for (const item of items) {
-    const aliasProductId = aliasMap.get(buildCatalogMatchKey(item));
+    const input = toRecognizedMatchInput(item);
+    const aliasProductId = aliasMap.get(buildCatalogMatchKey(input));
     const aliasProduct = aliasProductId ? productsById.get(aliasProductId) : null;
     const candidates = aliasProduct
       ? [{ product: aliasProduct, score: 0.99, reasons: ["learned_alias"] }]
-      : getCatalogMatchCandidates(
-          {
-            rawName: item.raw_name,
-            brand: item.brand,
-            sizeText: item.size_text,
-            priceTagText: item.price_tag_text,
-            productVisibleText: item.product_visible_text,
-          },
-          products,
-          { limit: 2 },
-        );
+      : getCatalogMatchCandidates(input, products, { limit: 2 });
 
     const best = candidates[0];
     const second = candidates[1];
@@ -145,4 +136,14 @@ export async function autoMatchRecognizedItems({
   }
 
   return stats;
+}
+
+function toRecognizedMatchInput(item: AutoMatchRecognizedItem): RecognizedMatchInput {
+  return {
+    rawName: item.raw_name,
+    brand: item.brand,
+    sizeText: item.size_text,
+    priceTagText: item.price_tag_text,
+    productVisibleText: item.product_visible_text,
+  };
 }
