@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "../lib/supabase/server";
-import { buildCatalogMatchKey } from "./catalog-matching";
+import { buildCatalogMatchKey, type RecognizedMatchInput } from "./catalog-matching";
 
 export type MatchAliasRecognizedItem = {
   id?: string;
@@ -28,7 +28,7 @@ export async function getAliasProductMap({
   items: MatchAliasRecognizedItem[];
   supabase: SupabaseServerClient;
 }) {
-  const keys = Array.from(new Set(items.map((item) => buildCatalogMatchKey(item)).filter(Boolean)));
+  const keys = Array.from(new Set(items.map((item) => buildCatalogMatchKey(toRecognizedMatchInput(item))).filter(Boolean)));
   const map = new Map<string, string>();
 
   if (keys.length === 0) {
@@ -63,7 +63,7 @@ export async function saveMatchAlias({
   item: MatchAliasRecognizedItem;
   supabase: SupabaseServerClient;
 }) {
-  const normalizedKey = buildCatalogMatchKey(item);
+  const normalizedKey = buildCatalogMatchKey(toRecognizedMatchInput(item));
 
   if (!normalizedKey) {
     return;
@@ -121,4 +121,14 @@ export async function saveMatchAliasForRecognizedItem({
   }
 
   await saveMatchAlias({ catalogProductId, companyId, item, supabase });
+}
+
+function toRecognizedMatchInput(item: MatchAliasRecognizedItem): RecognizedMatchInput {
+  return {
+    rawName: item.raw_name,
+    brand: item.brand ?? null,
+    sizeText: item.size_text ?? null,
+    priceTagText: item.price_tag_text ?? null,
+    productVisibleText: item.product_visible_text ?? null,
+  };
 }
