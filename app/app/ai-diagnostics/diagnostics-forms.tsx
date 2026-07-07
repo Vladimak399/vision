@@ -16,7 +16,14 @@ export function TextSmokeForm() {
         <button disabled={isPending} type="submit">{isPending ? "Проверяем…" : "Проверить text AI"}</button>
       </form>
       {state ? state.ok ? (
-        <pre style={preStyle}>{JSON.stringify(state.data, null, 2)}</pre>
+        <div style={{ display: "grid", gap: "0.5rem" }}>
+          <dl style={{ display: "grid", gap: "0.35rem", margin: 0 }}>
+            <ResultRow label="Provider/model" value={`${state.data.usage.provider} / ${state.data.usage.model}`} />
+            <ResultRow label="Input tokens" value={state.data.usage.input_tokens || "—"} />
+            <ResultRow label="Output tokens" value={state.data.usage.output_tokens || "—"} />
+          </dl>
+          <pre style={preStyle}>{JSON.stringify(state.data.response, null, 2)}</pre>
+        </div>
       ) : (
         <p style={{ color: "#b91c1c" }}>{state.error}</p>
       ) : null}
@@ -51,8 +58,9 @@ function VisionResult({ result }: { result: VisionOk }) {
       </dl>
       <div>
         <strong>Warnings</strong>
-        {result.warnings.length > 0 ? <ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : <p>—</p>}
+        {result.warnings.length > 0 ? <ul>{result.warnings.map((warning) => <li key={warning}>{localizeWarning(warning)}</li>)}</ul> : <p>—</p>}
       </div>
+      {result.items.length === 0 ? <EmptyVisionHint /> : null}
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
@@ -85,12 +93,38 @@ function VisionResult({ result }: { result: VisionOk }) {
   );
 }
 
+function EmptyVisionHint() {
+  return (
+    <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, padding: "0.75rem" }}>
+      <strong>Модель не смогла прочитать товары или ценники.</strong>
+      <p style={{ marginBottom: 0 }}>Для теста загрузите оригинальное фото, не скриншот, ближе к полке, чтобы ценники читались глазами.</p>
+      <ul>
+        <li>оригинальное фото, не скриншот;</li>
+        <li>ценники читаются глазами;</li>
+        <li>товар и ценник в одном кадре;</li>
+        <li>без сильных бликов;</li>
+        <li>лучше 1–2 полки, не весь стеллаж издалека.</li>
+      </ul>
+    </div>
+  );
+}
+
 function ResultRow({ label, value }: { label: string; value: string | number }) {
   return <div><dt style={{ color: "#6b7280" }}>{label}</dt><dd style={{ margin: 0 }}>{value}</dd></div>;
 }
 
 function formatPrice(priceMinor: number | null) {
   return typeof priceMinor === "number" ? `${(priceMinor / 100).toFixed(2)} ₽` : "—";
+}
+
+function localizeWarning(warning: string) {
+  const lower = warning.toLowerCase();
+
+  if (lower.includes("low") && lower.includes("resolution") || lower.includes("blurry") || lower.includes("illegible")) {
+    return "Фото слишком размытое или низкого разрешения: модель не может надёжно прочитать ценники.";
+  }
+
+  return warning;
 }
 
 const cellStyle = { borderBottom: "1px solid #e5e7eb", padding: "0.5rem", textAlign: "left" as const };
