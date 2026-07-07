@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../server/auth";
+import { saveMatchAliasForRecognizedItem } from "../../../../server/match-aliases";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 
 type CatalogProductRow = {
@@ -123,6 +124,8 @@ export async function createCorrectedCatalogMatch(formData: FormData): Promise<v
   if (updateItemError) {
     throw new Error(`Match сохранён, но статус товара не обновился: ${updateItemError.message}`);
   }
+
+  await saveMatchAliasForRecognizedItem({ catalogProductId: product.id, companyId, recognizedItemId: itemId, supabase });
 
   revalidatePath(`/app/monitoring/${sessionId}`);
   revalidatePath(`/app/monitoring/${sessionId}/review`);
