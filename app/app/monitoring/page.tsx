@@ -31,7 +31,15 @@ export default async function MonitoringPage() {
   try {
     membershipResult = await getPrimaryCompanyMembership();
   } catch (error) {
-    return <AccessError message={error instanceof Error ? error.message : "Не удалось проверить доступ к компании."} />;
+    return (
+      <AccessError
+        message={
+          error instanceof Error
+            ? error.message
+            : "Не удалось проверить доступ к компании."
+        }
+      />
+    );
   }
 
   if (membershipResult.status !== "ok") {
@@ -64,65 +72,108 @@ export default async function MonitoringPage() {
     }
 
     for (const photo of photos ?? []) {
-      photoCounts.set(photo.session_id, (photoCounts.get(photo.session_id) ?? 0) + 1);
+      photoCounts.set(
+        photo.session_id,
+        (photoCounts.get(photo.session_id) ?? 0) + 1,
+      );
     }
   }
 
   return (
-    <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 960, padding: "0 1rem" }}>
-      <header style={{ display: "grid", gap: "0.5rem" }}>
-        <Link href="/app">← Рабочая область</Link>
+    <main className="page">
+      <header className="hero">
         <div>
-          <h1 style={{ marginBottom: "0.25rem" }}>Мониторинг</h1>
-          <p style={{ margin: 0 }}>Компания: {membershipResult.membership.companyName}</p>
+          <p className="eyebrow">
+            <Link href="/app">Рабочая область</Link> / Мониторинг
+          </p>
+          <h1>Сессии мониторинга</h1>
+          <p className="lead">
+            Компания: {membershipResult.membership.companyName}. Создайте
+            сессию, загрузите фото и переходите к проверке только спорных
+            совпадений.
+          </p>
         </div>
-        <div>
-          <Link href="/app/monitoring/new">Создать сессию мониторинга</Link> · <Link href="/app/monitoring/test-center">Центр тестирования</Link>
+        <div className="actions">
+          <Link className="btn" href="/app/monitoring/new">
+            Создать сессию
+          </Link>
+          <Link
+            className="btn btn-secondary"
+            href="/app/monitoring/test-center"
+          >
+            Центр тестирования
+          </Link>
         </div>
       </header>
 
-      <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem" }}>
-        <h2 style={{ marginTop: 0 }}>Сессии мониторинга</h2>
+      <section className="card">
+        <div className="hero">
+          <div>
+            <h2>Все сессии</h2>
+            <p className="lead">
+              Откройте последнюю сессию или создайте новую для очередного обхода
+              магазина.
+            </p>
+          </div>
+        </div>
         {photoCountError ? (
-          <p style={{ color: "#b45309" }}>Не удалось загрузить количество фото: {photoCountError}</p>
+          <p className="alert alert-warn">
+            Не удалось загрузить количество фото: {photoCountError}
+          </p>
         ) : null}
         {error ? (
-          <p style={{ color: "#b91c1c" }}>Не удалось загрузить сессии: {error.message}</p>
+          <p className="alert alert-bad">
+            Не удалось загрузить сессии: {error.message}
+          </p>
         ) : !sessions || sessions.length === 0 ? (
-          <div style={{ display: "grid", gap: "0.75rem" }}>
-            <p style={{ margin: 0 }}>Сессии мониторинга пока не созданы.</p>
-            <Link href="/app/monitoring/new">Создать первую сессию</Link>
+          <div className="empty">
+            <h2>Сессий пока нет</h2>
+            <p className="muted">
+              Создайте первую сессию мониторинга. После этого здесь появятся
+              фото, статусы обработки и ссылка на экспорт.
+            </p>
+            <Link className="btn" href="/app/monitoring/new">
+              Создать первую сессию
+            </Link>
           </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <div className="table-wrap" style={{ marginTop: "1rem" }}>
+            <table>
               <thead>
                 <tr>
-                  <th style={cellStyle}>Дата создания</th>
-                  <th style={cellStyle}>Статус</th>
-                  <th style={cellStyle}>Магазин</th>
-                  <th style={cellStyle}>Фото</th>
+                  <th>Дата</th>
+                  <th>Статус</th>
+                  <th>Магазин</th>
+                  <th>Фото</th>
+                  <th>Следующий шаг</th>
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((session) => (
-                  <tr key={session.id}>
-                    <td style={cellStyle}>
-                      <Link href={`/app/monitoring/${session.id}`}>
-                        {new Date(session.created_at).toLocaleString("ru-RU")}
-                      </Link>
-                    </td>
-                    <td style={cellStyle}>
-                      <Link href={`/app/monitoring/${session.id}`}>{session.status}</Link>
-                    </td>
-                    <td style={cellStyle}>
-                      <Link href={`/app/monitoring/${session.id}`}>{session.stores?.name ?? "—"}</Link>
-                    </td>
-                    <td style={cellStyle}>
-                      <Link href={`/app/monitoring/${session.id}`}>{photoCounts.get(session.id) ?? 0}</Link>
-                    </td>
-                  </tr>
-                ))}
+                {sessions.map((session) => {
+                  const photos = photoCounts.get(session.id) ?? 0;
+                  return (
+                    <tr key={session.id}>
+                      <td>
+                        <Link href={`/app/monitoring/${session.id}`}>
+                          {new Date(session.created_at).toLocaleString("ru-RU")}
+                        </Link>
+                      </td>
+                      <td>
+                        <StatusBadge status={session.status} />
+                      </td>
+                      <td>{session.stores?.name ?? "Магазин не указан"}</td>
+                      <td>{photos}</td>
+                      <td>
+                        <Link
+                          className="btn btn-secondary"
+                          href={`/app/monitoring/${session.id}`}
+                        >
+                          {photos > 0 ? "Продолжить" : "Загрузить фото"}
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -132,14 +183,14 @@ export default async function MonitoringPage() {
   );
 }
 
-const cellStyle = { borderBottom: "1px solid #e5e7eb", padding: "0.5rem", textAlign: "left" as const };
-
 function NoAccess() {
   return (
     <main style={{ margin: "3rem auto", maxWidth: 720, padding: "0 1rem" }}>
       <Link href="/app">← Рабочая область</Link>
       <h1>Нет доступа к компании</h1>
-      <p>Ваш пользователь авторизован, но пока не добавлен в company_members.</p>
+      <p>
+        Ваш пользователь авторизован, но пока не добавлен в company_members.
+      </p>
     </main>
   );
 }
@@ -152,4 +203,25 @@ function AccessError({ message }: { message: string }) {
       <p>{message}</p>
     </main>
   );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const normalized = status.toLowerCase();
+  const cls =
+    normalized.includes("complete") || normalized.includes("ready")
+      ? "badge badge-ok"
+      : normalized.includes("fail") || normalized.includes("error")
+        ? "badge badge-bad"
+        : normalized.includes("process") || normalized.includes("progress")
+          ? "badge badge-info"
+          : "badge badge-neutral";
+  const label =
+    status === "draft"
+      ? "Создана"
+      : status === "processing"
+        ? "В обработке"
+        : status === "completed"
+          ? "Готова"
+          : status;
+  return <span className={cls}>{label}</span>;
 }

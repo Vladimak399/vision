@@ -19,7 +19,8 @@ function getSafeNextPath(value: string | null): string {
 
   try {
     const url = new URL(trimmed, "https://pricevision.local");
-    const isAllowedAppPath = url.pathname === "/app" || url.pathname.startsWith("/app/");
+    const isAllowedAppPath =
+      url.pathname === "/app" || url.pathname.startsWith("/app/");
 
     if (url.origin !== "https://pricevision.local" || !isAllowedAppPath) {
       return FALLBACK_NEXT_PATH;
@@ -72,8 +73,12 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: "grid", gap: "1rem", maxWidth: 420 }}>
-      <label style={{ display: "grid", gap: "0.35rem" }}>
+    <form
+      onSubmit={handleSubmit}
+      className="grid"
+      style={{ maxWidth: 420, marginTop: "1.25rem" }}
+    >
+      <label className="field">
         <span>Email</span>
         <input
           autoComplete="email"
@@ -86,7 +91,7 @@ export function LoginForm() {
         />
       </label>
 
-      <label style={{ display: "grid", gap: "0.35rem" }}>
+      <label className="field">
         <span>Пароль</span>
         <input
           autoComplete="current-password"
@@ -98,10 +103,14 @@ export function LoginForm() {
         />
       </label>
 
-      {error ? <p role="alert" style={{ color: "crimson" }}>{error}</p> : null}
+      {error ? (
+        <p role="alert" className="alert alert-bad">
+          Не удалось войти: {error}
+        </p>
+      ) : null}
 
       <button disabled={isLoading} type="submit">
-        {isLoading ? "Входим..." : "Войти"}
+        {isLoading ? "Входим…" : "Войти"}
       </button>
     </form>
   );
