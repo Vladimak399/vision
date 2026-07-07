@@ -1,4 +1,5 @@
 import { getAiRuntimeConfig } from "../ai-config";
+import { AiHttpError, isAiFallbackCandidate, withAiRetry } from "../ai-retry";
 import type { ShelfRecognitionInput, ShelfRecognitionPayload, ShelfRecognitionResult } from "./types";
 
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -73,33 +74,61 @@ export async function recognizeShelfPhotoWithGemini(input: ShelfRecognitionInput
     throw new Error(`Vision provider ${aiConfig.vision.provider} is not Gemini.`);
   }
 
-  const model = aiConfig.vision.model;
+  try {
+    return await runGeminiShelfRecognition({ apiKey, input, model: aiConfig.vision.model });
+  } catch (error) {
+    if (
+      aiConfig.fallback.provider === "gemini" &&
+      aiConfig.fallback.model &&
+      aiConfig.fallback.model !== aiConfig.vision.model &&
+      isAiFallbackCandidate(error)
+    ) {
+      return runGeminiShelfRecognition({ apiKey, input, model: aiConfig.fallback.model });
+    }
+
+    throw error;
+  }
+}
+
+async function runGeminiShelfRecognition({
+  apiKey,
+  input,
+  model,
+}: {
+  apiKey: string;
+  input: ShelfRecognitionInput;
+  model: string;
+}) {
   const startedAt = Date.now();
   const endpoint = `${GEMINI_API_BASE_URL}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const imagePart = getInputImagePart(input);
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: SHELF_RECOGNITION_PROMPT }, imagePart],
+  const body = await withAiRetry(async () => {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: SHELF_RECOGNITION_PROMPT }, imagePart],
+          },
+        ],
+        generationConfig: {
+          response_mime_type: "application/json",
+          temperature: 0,
         },
-      ],
-      generationConfig: {
-        response_mime_type: "application/json",
-        temperature: 0,
-      },
-    }),
+      }),
+    });
+
+    const responseBody = (await response.json().catch(() => null)) as GeminiGenerateContentResponse | null;
+
+    if (!response.ok) {
+      throw new AiHttpError(responseBody?.error?.message || `Gemini OCR request failed with status ${response.status}.`, response.status);
+    }
+
+    return responseBody;
   });
-
-  const body = (await response.json().catch(() => null)) as GeminiGenerateContentResponse | null;
-
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `Gemini OCR request failed with status ${response.status}.`);
-  }
 
   const outputText = extractOutputText(body);
 
