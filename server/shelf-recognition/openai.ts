@@ -8,7 +8,10 @@ const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const SHELF_RECOGNITION_PROMPT = `
 You analyze retail shelf photos for competitor price monitoring.
 
-Extract visible product-price candidates from the whole shelf image.
+Your task is exhaustive shelf price extraction, not a short summary.
+Scan every shelf row top-to-bottom and left-to-right, including image edges and partially visible price tags.
+Do not stop after 3-5 products: one readable shelf price tag should usually produce one item row.
+If a product/price is only partially readable, return it with needs_review=true instead of omitting it.
 
 Important rules:
 1. Price must come from a visible shelf price tag only. Never guess a price from packaging.
@@ -20,7 +23,9 @@ Important rules:
 7. Do not match items to any internal catalog.
 8. Return prices in minor RUB units. Example: 399.99 RUB -> 39999.
 9. If the photo is too blurry or the text is unreadable, return an empty items array and explain in warnings.
-10. Analyze the full photo: top shelves, bottom shelves, edges, and partially visible products.
+10. Always fill position_hint with a short location such as "top shelf left", "middle shelf center", or "bottom shelf right".
+11. Do not merge different flavors, sizes, aromas, or variants into one item.
+12. Before responding, verify that you inspected top/middle/bottom shelves and included every readable price tag.
 
 Confidence fields:
 - confidence: how confident you are in extracted text and price.

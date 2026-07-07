@@ -42,6 +42,54 @@ export async function suggestCatalogMatchesForSession(_state: MatchActionState, 
   };
 }
 
+
+export async function acceptHighConfidenceCandidatesForSession(_state: MatchActionState, formData: FormData): Promise<MatchActionState> {
+  const auth = await getMatchAuth(formData);
+  if (!auth.ok) return { error: auth.error };
+
+  const { companyId, department, sessionId, supabase } = auth;
+  let query = supabase
+    .from("recognized_items")
+    .select("id, matches(id, score, is_active, catalog_product_id)")
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId)
+    .in("status", ["needs_review", "recognized"]);
+
+  if (department === "none") query = query.is("department", null);
+  else if (department) query = query.eq("department", department);
+
+  const { data: items, error } = await query.limit(500).returns<Array<{ id: string; matches: Array<{ id: string; score: number; is_active: boolean; catalog_product_id: string }> | null }>>();
+  if (error) return { error: `Не удалось загрузить кандидаты: ${error.message}` };
+
+  let accepted = 0;
+  for (const item of items ?? []) {
+    const activeMatch = item.matches?.find((match) => match.is_active && match.score >= 0.9);
+    if (!activeMatch) continue;
+
+    const { error: matchError } = await supabase
+      .from("matches")
+      .update({ decision: "accepted", is_active: true })
+      .eq("company_id", companyId)
+      .eq("id", activeMatch.id)
+      .eq("is_active", true);
+    if (matchError) return { error: `Не удалось принять candidate: ${matchError.message}` };
+
+    const { error: itemError } = await supabase
+      .from("recognized_items")
+      .update({ status: "matched" })
+      .eq("company_id", companyId)
+      .eq("session_id", sessionId)
+      .eq("id", item.id);
+    if (itemError) return { error: `Не удалось обновить статус: ${itemError.message}` };
+
+    await saveMatchAliasForRecognizedItem({ catalogProductId: activeMatch.catalog_product_id, companyId, recognizedItemId: item.id, supabase });
+    accepted += 1;
+  }
+
+  revalidateReview(sessionId);
+  return { message: `Принято уверенных candidates: ${accepted}. Низкие и спорные строки оставлены на проверку.` };
+}
+
 export async function updateCatalogMatchDecision(formData: FormData): Promise<void> {
   const auth = await getMatchAuth(formData);
   if (!auth.ok) throw new Error(auth.error);

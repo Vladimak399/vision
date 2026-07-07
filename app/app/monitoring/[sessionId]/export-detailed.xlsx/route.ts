@@ -120,6 +120,33 @@ export async function GET(_request: Request, { params }: RouteContext) {
   });
 }
 
+function buildExportSummary(items: ExportItem[]) {
+  return items.reduce(
+    (summary, item) => {
+      const activeMatch = item.matches?.find((match) => match.is_active) ?? null;
+      const hasCatalogProduct = Boolean(activeMatch?.catalog_products);
+      if (item.status === "matched") summary.matched += 1;
+      if (item.status === "unmatched") summary.unmatched += 1;
+      if (item.status === "needs_review") {
+        summary.needsReview += 1;
+        if (hasCatalogProduct) summary.needsReviewWithCandidate += 1;
+        else summary.needsReviewWithoutCandidate += 1;
+      }
+      if (hasLargePriceDiff(item, activeMatch)) summary.largePriceDiff += 1;
+      return summary;
+    },
+    { matched: 0, unmatched: 0, needsReview: 0, needsReviewWithCandidate: 0, needsReviewWithoutCandidate: 0, largePriceDiff: 0 },
+  );
+}
+
+function hasLargePriceDiff(item: ExportItem, activeMatch: ExportMatch | null) {
+  const product = activeMatch?.catalog_products ?? null;
+  const competitorPrice = item.promo_price_minor ?? item.price_minor;
+  const ownPrice = product?.own_price_minor ?? null;
+  if (competitorPrice === null || ownPrice === null || ownPrice <= 0) return false;
+  return Math.abs((competitorPrice - ownPrice) / ownPrice) >= 0.05;
+}
+
 function buildExportRow(item: ExportItem) {
   const activeMatch = item.matches?.find((match) => match.is_active) ?? null;
   const product = activeMatch?.catalog_products ?? null;

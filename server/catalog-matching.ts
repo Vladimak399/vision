@@ -57,6 +57,12 @@ const STOP_WORDS = new Set([
   "распродажа",
   "акция",
   "шт",
+  "р",
+  "коп",
+  "скидка",
+  "суперцена",
+  "выгода",
+  "новинка",
 ]);
 
 const LOW_WEIGHT_TOKENS = new Set([
@@ -152,6 +158,7 @@ const TOKEN_ALIASES: Record<string, string> = {
   сгущенного: "сгущенка",
   сгущенное: "сгущенка",
   сгущенным: "сгущенка",
+  сгущен: "сгущенка",
   молока: "молоко",
   молоком: "молоко",
   молочный: "молоко",
@@ -237,7 +244,7 @@ export function getCatalogMatchCandidates(
   const recognizedText = getRecognizedText(recognized);
   const recognizedTokens = tokenizeForMatch(recognizedText);
   const recognizedBrand = normalizeBrand([recognized.brand, recognized.rawName, recognized.productVisibleText, recognized.priceTagText].filter(Boolean).join(" "));
-  const recognizedSize = normalizeSize(recognized.sizeText ?? recognized.rawName ?? recognized.priceTagText ?? "");
+  const recognizedSize = normalizeSize([recognized.sizeText, recognized.rawName, recognized.productVisibleText, recognized.priceTagText].filter(Boolean).join(" "));
   const recognizedTrigrams = getTrigrams(normalizeText(recognizedText));
 
   if (recognizedTokens.length === 0) {
@@ -257,7 +264,7 @@ export function buildCatalogMatchKey(recognized: RecognizedMatchInput) {
     .filter((token) => !LOW_WEIGHT_TOKENS.has(token))
     .slice(0, 10)
     .sort();
-  const size = normalizeSize(recognized.sizeText ?? recognized.rawName ?? recognized.priceTagText ?? "");
+  const size = normalizeSize([recognized.sizeText, recognized.rawName, recognized.productVisibleText, recognized.priceTagText].filter(Boolean).join(" "));
 
   if (tokens.length === 0) {
     return "";
@@ -355,12 +362,12 @@ export function tokenizeForMatch(value: string) {
   const tokenSet = new Set<string>();
 
   for (const rawToken of normalizeText(value).split(" ")) {
-    if (rawToken.length <= 1 || /^\d+$/.test(rawToken) || STOP_WORDS.has(rawToken)) {
+    if (rawToken.length <= 1 || /^\d+$/.test(rawToken) || /^\d+[.,]?\d*$/.test(rawToken) || STOP_WORDS.has(rawToken)) {
       continue;
     }
 
     for (const variant of getTokenVariants(rawToken)) {
-      if (variant.length > 1 && !/^\d+$/.test(variant) && !STOP_WORDS.has(variant)) {
+      if (variant.length > 1 && !/^\d+$/.test(variant) && !/^\d+[.,]?\d*$/.test(variant) && !STOP_WORDS.has(variant)) {
         tokenSet.add(variant);
       }
     }
@@ -375,7 +382,7 @@ export function normalizeSize(value: string) {
     .replace(/[ё]/g, "е")
     .replace(/,/g, ".")
     .replace(/\s+/g, " ");
-  const match = normalized.match(/(\d+(?:\.\d+)?)\s*(кг|kg|г|гр|g|л|l|мл|ml|шт)/i);
+  const match = normalized.match(/(\d+(?:\.\d+)?)\s*(кг|kg|г|гр|g|л|l|мл|ml|шт|штук|pcs?)/i);
 
   if (!match) {
     return null;
@@ -407,7 +414,7 @@ export function normalizeSize(value: string) {
   return `${roundSize(amount)}pc`;
 }
 
-function getRecognizedText(recognized: RecognizedMatchInput) {
+export function getRecognizedText(recognized: RecognizedMatchInput) {
   return [recognized.rawName, recognized.brand, recognized.sizeText, recognized.priceTagText, recognized.productVisibleText].filter(Boolean).join(" ");
 }
 
@@ -438,7 +445,7 @@ function stemRussianToken(token: string) {
   return token.replace(/(ыми|ими|ого|его|ому|ему|ыми|ими|ая|яя|ое|ее|ые|ие|ый|ий|ой|ей|ов|ев|ам|ям|ах|ях|а|я|ы|и|е|у|ю)$/u, "");
 }
 
-function normalizeBrand(value: string) {
+export function normalizeBrand(value: string) {
   const tokens = normalizeText(value).split(" ").filter(Boolean);
 
   for (const token of tokens) {
@@ -449,7 +456,7 @@ function normalizeBrand(value: string) {
   return null;
 }
 
-function areTokensClose(left: string, right: string) {
+export function areTokensClose(left: string, right: string) {
   if (left === right) return true;
   if (left.length < 4 || right.length < 4) return false;
 

@@ -232,6 +232,10 @@ async function processOneRecognitionJob({
   try {
     const image = await loadPhotoAsBase64(supabase, photo.storage_path);
     const recognition = await recognizeShelfPhoto(image);
+    const ocrWarnings = [...recognition.warnings];
+    if (recognition.items.length > 0 && recognition.items.length <= 3) {
+      ocrWarnings.push(`OCR returned only ${recognition.items.length} item(s). Check image quality/prompt coverage; shelf tiling may be needed.`);
+    }
     const rows = buildRecognizedItemRows({ companyId, sessionId, photoId, items: recognition.items });
     let autoMatch: AutoMatchStats | undefined;
 
@@ -271,7 +275,7 @@ async function processOneRecognitionJob({
       .from("jobs")
       .update({
         status: "succeeded",
-        error: autoMatch?.errors.length ? `OCR OK, auto-match warnings: ${autoMatch.errors.join("; ").slice(0, 500)}` : null,
+        error: buildJobDiagnostics({ ocrWarnings, autoMatch }),
         model: recognition.usage.model,
         input_tokens: recognition.usage.input_tokens,
         output_tokens: recognition.usage.output_tokens,
@@ -316,6 +320,16 @@ async function loadPhotoAsBase64(
     imageBase64: Buffer.from(arrayBuffer).toString("base64"),
     mimeType,
   };
+}
+
+function buildJobDiagnostics({ ocrWarnings, autoMatch }: { ocrWarnings: string[]; autoMatch?: AutoMatchStats }) {
+  const diagnostics = [
+    ...ocrWarnings.map((warning) => `OCR warning: ${warning}`),
+    autoMatch ? `Auto-match: items=${autoMatch.items}, matched=${autoMatch.autoMatched}, suggested=${autoMatch.suggested}, no_candidate=${autoMatch.noCandidate}` : null,
+    ...(autoMatch?.errors ?? []).map((error) => `Auto-match warning: ${error}`),
+  ].filter(Boolean);
+
+  return diagnostics.length > 0 ? diagnostics.join("; ").slice(0, 1000) : null;
 }
 
 function buildRecognizedItemRows({

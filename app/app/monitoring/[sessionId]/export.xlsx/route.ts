@@ -115,6 +115,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   }
 
   const workbook = XLSX.utils.book_new();
+  const summary = buildExportSummary(items ?? []);
   const rows = (items ?? []).map((item) => buildExportRow(item));
   const summarySheet = XLSX.utils.aoa_to_sheet([
     ["Параметр", "Значение"],
@@ -125,6 +126,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["Статус сессии", session.status],
     ["Создана", formatDateTime(session.created_at)],
     ["Строк в экспорте", String(items?.length ?? 0)],
+    ["Matched", String(summary.matched)],
+    ["Unmatched / Нет в ассортименте", String(summary.unmatched)],
+    ["Needs review", String(summary.needsReview)],
+    ["Needs review без кандидата", String(summary.needsReviewWithoutCandidate)],
+    ["Needs review с кандидатом", String(summary.needsReviewWithCandidate)],
+    ["Большая разница цены", String(summary.largePriceDiff)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
   ]);
   const itemsSheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": "Нет товаров для экспорта" }]);
@@ -142,6 +149,33 @@ export async function GET(_request: Request, { params }: RouteContext) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function buildExportSummary(items: ExportItem[]) {
+  return items.reduce(
+    (summary, item) => {
+      const activeMatch = getActiveMatch(item.matches);
+      const hasCatalogProduct = Boolean(activeMatch?.catalog_products);
+      if (item.status === "matched") summary.matched += 1;
+      if (item.status === "unmatched") summary.unmatched += 1;
+      if (item.status === "needs_review") {
+        summary.needsReview += 1;
+        if (hasCatalogProduct) summary.needsReviewWithCandidate += 1;
+        else summary.needsReviewWithoutCandidate += 1;
+      }
+      if (hasLargePriceDiff(item, activeMatch)) summary.largePriceDiff += 1;
+      return summary;
+    },
+    { matched: 0, unmatched: 0, needsReview: 0, needsReviewWithCandidate: 0, needsReviewWithoutCandidate: 0, largePriceDiff: 0 },
+  );
+}
+
+function hasLargePriceDiff(item: ExportItem, activeMatch: ExportMatch | null) {
+  const product = activeMatch?.catalog_products ?? null;
+  const competitorPrice = getEffectiveCompetitorPrice(item);
+  const ownPrice = product?.own_price_minor ?? null;
+  if (competitorPrice === null || ownPrice === null || ownPrice <= 0) return false;
+  return Math.abs((competitorPrice - ownPrice) / ownPrice) >= 0.05;
 }
 
 function buildExportRow(item: ExportItem) {

@@ -10,6 +10,7 @@ import { updateCatalogMatchDecision } from "../match-actions";
 import { RecognizedItemReviewControls } from "../recognized-item-review-controls";
 
 type ReviewDepartmentFilter = "all" | "products" | "chemistry" | "none";
+type ReviewWorkFilter = "all" | "review" | "without_candidate" | "with_candidate" | "matched" | "unmatched" | "low_ocr" | "large_diff";
 
 type ReviewPageProps = {
   params: Promise<{
@@ -17,6 +18,7 @@ type ReviewPageProps = {
   }>;
   searchParams?: Promise<{
     department?: string;
+    filter?: string;
   }>;
 };
 
@@ -86,11 +88,22 @@ const departmentFilters: Array<{ key: ReviewDepartmentFilter; label: string }> =
 ];
 
 const REVIEW_STATUSES = ["recognized", "needs_review", "matched", "confirmed", "unmatched", "rejected"];
+const reviewFilters: Array<{ key: ReviewWorkFilter; label: string }> = [
+  { key: "all", label: "Все" },
+  { key: "review", label: "Требует проверки" },
+  { key: "without_candidate", label: "Без кандидата" },
+  { key: "with_candidate", label: "С кандидатом" },
+  { key: "matched", label: "Сопоставлено" },
+  { key: "unmatched", label: "Нет в ассортименте" },
+  { key: "low_ocr", label: "Низкая уверенность OCR" },
+  { key: "large_diff", label: "Большая разница цены" },
+];
 
 export default async function RecognizedItemsReviewPage({ params, searchParams }: ReviewPageProps) {
   const { sessionId } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const departmentFilter = parseDepartmentFilter(resolvedSearchParams.department);
+  const workFilter = parseWorkFilter(resolvedSearchParams.filter);
   const user = await getCurrentUser();
 
   if (!user) {
@@ -159,6 +172,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
     .returns<ReviewCatalogProduct[]>();
 
   const suggestionsByItemId = buildSuggestionsByItemId(items ?? [], catalogProducts ?? []);
+  const visibleItems = applyWorkFilter(items ?? [], suggestionsByItemId, workFilter);
   const counts = getStatusCounts(items ?? []);
   const needsReviewCount = (counts.recognized ?? 0) + (counts.needs_review ?? 0);
   const readyCount = (counts.matched ?? 0) + (counts.confirmed ?? 0) + (counts.unmatched ?? 0);
@@ -188,6 +202,22 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
           ))}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+          {reviewFilters.map((filter) => (
+            <Link
+              key={filter.key}
+              href={getReviewFilterHref(sessionId, departmentFilter, filter.key)}
+              style={{
+                border: "1px solid #d1d5db",
+                borderRadius: 999,
+                padding: "0.25rem 0.5rem",
+                fontWeight: filter.key === workFilter ? 700 : 400,
+              }}
+            >
+              {filter.label}
+            </Link>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
           {Object.entries(counts).map(([status, count]) => (
             <span key={status} style={{ border: "1px solid #d1d5db", borderRadius: 999, padding: "0.25rem 0.5rem" }}>
               {getStatusLabel(status)}: {count}
@@ -206,9 +236,9 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
 
       <MatchControls sessionId={sessionId} department={departmentFilter} />
 
-      {items && items.length > 0 ? (
+      {visibleItems.length > 0 ? (
         <div style={{ display: "grid", gap: "0.75rem" }}>
-          {items.map((item) => {
+          {visibleItems.map((item) => {
             const activeMatch = getActiveMatch(item.matches);
             const suggestions = suggestionsByItemId.get(item.id) ?? [];
 
@@ -336,8 +366,43 @@ function getStatusCounts(items: ReviewItem[]) {
   return counts;
 }
 
+function parseWorkFilter(value: string | undefined): ReviewWorkFilter {
+  return value === "review" || value === "without_candidate" || value === "with_candidate" || value === "matched" || value === "unmatched" || value === "low_ocr" || value === "large_diff" ? value : "all";
+}
+
+function applyWorkFilter(items: ReviewItem[], suggestionsByItemId: Map<string, ReviewCatalogSuggestion[]>, filter: ReviewWorkFilter) {
+  return items.filter((item) => {
+    const activeMatch = getActiveMatch(item.matches);
+    const hasCandidate = Boolean(activeMatch) || (suggestionsByItemId.get(item.id)?.length ?? 0) > 0;
+    const largeDiff = hasLargePriceDiff(item, activeMatch);
+    if (filter === "review") return item.status === "needs_review" || item.status === "recognized";
+    if (filter === "without_candidate") return !hasCandidate && (item.status === "needs_review" || item.status === "recognized");
+    if (filter === "with_candidate") return hasCandidate && (item.status === "needs_review" || item.status === "recognized");
+    if (filter === "matched") return item.status === "matched" || item.status === "confirmed";
+    if (filter === "unmatched") return item.status === "unmatched";
+    if (filter === "low_ocr") return item.confidence < 0.7 || (item.link_confidence ?? 1) < 0.7;
+    if (filter === "large_diff") return largeDiff;
+    return true;
+  });
+}
+
 function parseDepartmentFilter(value: string | undefined): ReviewDepartmentFilter {
   return value === "products" || value === "chemistry" || value === "none" ? value : "all";
+}
+
+function getReviewFilterHref(sessionId: string, department: ReviewDepartmentFilter, filter: ReviewWorkFilter) {
+  const params = new URLSearchParams();
+  if (department !== "all") params.set("department", department);
+  if (filter !== "all") params.set("filter", filter);
+  const query = params.toString();
+  return `/app/monitoring/${sessionId}/review${query ? `?${query}` : ""}`;
+}
+
+function hasLargePriceDiff(item: ReviewItem, activeMatch: ReviewMatch | null) {
+  const ownPrice = activeMatch?.catalog_products?.own_price_minor ?? null;
+  const competitorPrice = item.promo_price_minor ?? item.price_minor;
+  if (ownPrice === null || competitorPrice === null || ownPrice <= 0) return false;
+  return Math.abs((competitorPrice - ownPrice) / ownPrice) >= 0.05;
 }
 
 function getDepartmentHref(sessionId: string, department: ReviewDepartmentFilter) {
