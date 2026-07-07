@@ -21,10 +21,13 @@ type LooseRecognitionItem = Partial<ShelfRecognitionItem> & {
   product?: unknown;
   title?: unknown;
   price?: unknown;
+  price_text?: unknown;
   current_price_minor?: unknown;
   current_price?: unknown;
   old_price?: unknown;
+  old_price_text?: unknown;
   promo_price?: unknown;
+  promo_price_text?: unknown;
   packaging_text?: unknown;
   visible_text?: unknown;
   location?: unknown;
@@ -129,11 +132,14 @@ function parseShelfRecognitionPayload(value: string): ShelfRecognitionPayload {
   const looseWarnings = getLooseWarnings(parsed);
 
   if (!Array.isArray(looseItems)) {
-    throw new Error("Gemini OCR response did not contain an items/products array.");
+    return {
+      items: [],
+      warnings: [...looseWarnings, "Gemini returned JSON without an item array. Treating response as empty OCR result."],
+    };
   }
 
   return {
-    items: looseItems.map(normalizeLooseItem).filter((item) => item.raw_name || item.price_tag_text || item.product_visible_text),
+    items: looseItems.map(normalizeLooseItem).filter((item) => item.raw_name || item.price_tag_text || item.product_visible_text || item.price_minor !== null),
     warnings: looseWarnings,
   };
 }
@@ -164,9 +170,9 @@ function normalizeLooseItem(item: LooseRecognitionItem): ShelfRecognitionItem {
     raw_name: nullableString(item.raw_name) ?? nullableString(item.name) ?? nullableString(item.product_name) ?? nullableString(item.product) ?? nullableString(item.title) ?? nullableString(item.price_tag_text) ?? nullableString(item.product_visible_text),
     brand: nullableString(item.brand),
     size_text: nullableString(item.size_text),
-    price_minor: nullableNumber(item.price_minor) ?? parseRubPriceToMinor(item.price) ?? parseRubPriceToMinor(item.current_price_minor) ?? parseRubPriceToMinor(item.current_price),
-    old_price_minor: nullableNumber(item.old_price_minor) ?? parseRubPriceToMinor(item.old_price),
-    promo_price_minor: nullableNumber(item.promo_price_minor) ?? parseRubPriceToMinor(item.promo_price),
+    price_minor: nullableNumber(item.price_minor) ?? parseRubPriceToMinor(item.price) ?? parseRubPriceToMinor(item.price_text) ?? parseRubPriceToMinor(item.current_price_minor) ?? parseRubPriceToMinor(item.current_price),
+    old_price_minor: nullableNumber(item.old_price_minor) ?? parseRubPriceToMinor(item.old_price) ?? parseRubPriceToMinor(item.old_price_text),
+    promo_price_minor: nullableNumber(item.promo_price_minor) ?? parseRubPriceToMinor(item.promo_price) ?? parseRubPriceToMinor(item.promo_price_text),
     currency: "RUB",
     price_tag_text: nullableString(item.price_tag_text),
     product_visible_text: nullableString(item.product_visible_text) ?? nullableString(item.packaging_text) ?? nullableString(item.visible_text),
