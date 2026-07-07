@@ -38,6 +38,7 @@ type ReviewStatus = "needs_review" | "confirmed" | "rejected" | "unmatched";
 
 const fieldStyle = { width: "100%", minWidth: 180, padding: "0.35rem", border: "1px solid #d1d5db", borderRadius: 6 } as const;
 const suggestionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, display: "grid", gap: "0.35rem", padding: "0.5rem" } as const;
+const warningStyle = { background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 8, color: "#92400e", margin: "0.35rem 0 0", padding: "0.4rem 0.5rem" } as const;
 
 export function RecognizedItemReviewControls({ sessionId, item, suggestions = [] }: Props) {
   return (
@@ -55,26 +56,35 @@ export function RecognizedItemReviewControls({ sessionId, item, suggestions = []
           {suggestions.length > 0 ? (
             <div style={{ display: "grid", gap: "0.4rem" }}>
               <strong>Подсказки из каталога</strong>
-              {suggestions.map((suggestion) => (
-                <form key={suggestion.product.id} action={createCorrectedCatalogMatch} style={suggestionStyle}>
-                  <input type="hidden" name="session_id" value={sessionId} />
-                  <input type="hidden" name="item_id" value={item.id} />
-                  <input type="hidden" name="catalog_product_id" value={suggestion.product.id} />
-                  <input type="hidden" name="catalog_query" value={suggestion.product.external_sku ?? suggestion.product.name} />
-                  <div>
-                    <strong>{suggestion.product.name}</strong>
-                    <p style={{ color: "#4b5563", margin: "0.2rem 0 0" }}>
-                      SKU: {suggestion.product.external_sku ?? "—"} · бренд: {suggestion.product.brand ?? "—"} · размер: {suggestion.product.size_text ?? "—"} · наша цена: {formatPrice(suggestion.product.own_price_minor, suggestion.product.currency)} · score: {formatPercent(suggestion.score)}
-                    </p>
-                    {suggestion.reasons.length > 0 ? (
-                      <p style={{ color: "#6b7280", margin: "0.2rem 0 0" }}>
-                        Причины: {suggestion.reasons.map(getReasonLabel).join(", ")}
+              {suggestions.map((suggestion) => {
+                const sizeAmbiguous = isSizeAmbiguous(item.size_text, suggestion.product.size_text);
+
+                return (
+                  <form key={suggestion.product.id} action={createCorrectedCatalogMatch} style={suggestionStyle}>
+                    <input type="hidden" name="session_id" value={sessionId} />
+                    <input type="hidden" name="item_id" value={item.id} />
+                    <input type="hidden" name="catalog_product_id" value={suggestion.product.id} />
+                    <input type="hidden" name="catalog_query" value={suggestion.product.external_sku ?? suggestion.product.name} />
+                    <div>
+                      <strong>{suggestion.product.name}</strong>
+                      <p style={{ color: "#4b5563", margin: "0.2rem 0 0" }}>
+                        SKU: {suggestion.product.external_sku ?? "—"} · бренд: {suggestion.product.brand ?? "—"} · размер: {suggestion.product.size_text ?? "—"} · наша цена: {formatPrice(suggestion.product.own_price_minor, suggestion.product.currency)} · score: {formatPercent(suggestion.score)}
                       </p>
-                    ) : null}
-                  </div>
-                  <SubmitButton pendingLabel="Связываем…">Связать этот товар</SubmitButton>
-                </form>
-              ))}
+                      {sizeAmbiguous ? (
+                        <p style={warningStyle}>
+                          На фото размер не распознан, а кандидат размерный: {suggestion.product.size_text}. Массово не принимать; проверь граммовку вручную.
+                        </p>
+                      ) : null}
+                      {suggestion.reasons.length > 0 ? (
+                        <p style={{ color: "#6b7280", margin: "0.2rem 0 0" }}>
+                          Причины: {suggestion.reasons.map(getReasonLabel).join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+                    <SubmitButton pendingLabel="Связываем…">Связать этот товар</SubmitButton>
+                  </form>
+                );
+              })}
             </div>
           ) : (
             <p style={{ color: "#6b7280", margin: 0 }}>Автоподсказок нет. Можно ввести точный SKU или часть названия вручную.</p>
@@ -132,6 +142,14 @@ function formatPrice(value: number | null, currency: string | null) {
 
 function formatPercent(value: number | null) {
   return value === null || !Number.isFinite(value) ? "—" : `${Math.round(value * 100)}%`;
+}
+
+function isSizeAmbiguous(recognizedSize: string | null, catalogSize: string | null) {
+  return !hasText(recognizedSize) && hasText(catalogSize);
+}
+
+function hasText(value: string | null) {
+  return Boolean(value?.trim());
 }
 
 function getReasonLabel(reason: string) {
