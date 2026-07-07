@@ -78,6 +78,15 @@ export default async function AiDiagnosticsPage() {
         <h2 style={{ marginTop: 0 }}>Vision AI smoke test</h2>
         <p style={{ fontWeight: 700 }}>Тест без сохранения в базу</p>
         <VisionSmokeForm />
+        <h3>Чеклист качества фото</h3>
+        <ul>
+          <li>оригинальное фото, не скриншот;</li>
+          <li>ценники читаются глазами;</li>
+          <li>товар и ценник в одном кадре;</li>
+          <li>без сильных бликов;</li>
+          <li>лучше 1–2 полки, не весь стеллаж издалека;</li>
+          <li>не использовать фото, сжатые мессенджерами.</li>
+        </ul>
         <p style={{ color: "#6b7280", marginBottom: 0 }}>
           Проверка отправляет изображение напрямую провайдеру и не создает jobs, monitoring_photos или recognized_items.
         </p>

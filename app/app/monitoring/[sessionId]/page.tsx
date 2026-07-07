@@ -137,6 +137,13 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
     .eq("kind", "photo_ocr")
     .returns<RecognitionJob[]>();
 
+  const { count: activeMatchesCount } = await supabase
+    .from("matches")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .in("recognized_item_id", (recognizedItems ?? []).map((item) => item.id));
+
   const photoOptions = (photos ?? []).map((photo) => ({
     id: photo.id,
     label: getStorageFilename(photo.storage_path) || formatShortId(photo.id),
@@ -171,6 +178,17 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
           <DetailRow label="Фото" value={String(photos?.length ?? 0)} />
         </dl>
       </section>
+
+      {canCreateManualItems ? (
+        <SessionDiagnosticsPanel
+          activeMatchesCount={activeMatchesCount ?? 0}
+          jobs={recognitionJobs ?? []}
+          photos={photos ?? []}
+          recognizedItems={recognizedItems ?? []}
+          sessionId={session.id}
+          sessionStatus={session.status}
+        />
+      ) : null}
 
       <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb", display: "grid", gap: "1rem" }}>
         <h2 style={{ margin: 0 }}>Фото</h2>
@@ -288,6 +306,68 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
       </section>
     </main>
   );
+}
+
+
+function SessionDiagnosticsPanel({
+  activeMatchesCount,
+  jobs,
+  photos,
+  recognizedItems,
+  sessionId,
+  sessionStatus,
+}: {
+  activeMatchesCount: number;
+  jobs: RecognitionJob[];
+  photos: MonitoringPhoto[];
+  recognizedItems: RecognizedItem[];
+  sessionId: string;
+  sessionStatus: string;
+}) {
+  const photoCounts = countStatuses(photos.map((photo) => photo.status), ["uploaded", "queued", "processing", "processed", "failed"]);
+  const jobCounts = countStatuses(jobs.map((job) => job.status), ["queued", "running", "succeeded", "failed", "cancelled"]);
+  const itemCounts = countStatuses(recognizedItems.map((item) => item.status), ["recognized", "matched", "needs_review", "unmatched", "confirmed", "rejected"]);
+  const summary = getRecognitionJobSummary(jobs);
+  const hints = [
+    photoCounts.uploaded > 0 && jobCounts.queued === 0 ? "Фото загружены, но не поставлены в очередь. Нажмите кнопку постановки в очередь." : null,
+    jobCounts.queued > 0 ? "Есть задачи OCR в очереди. Запустите тест 1 фото или пачку." : null,
+    jobCounts.failed > 0 ? "Есть ошибки OCR. Откройте диагностику или проверьте текст ошибки." : null,
+    recognizedItems.length === 0 && photoCounts.processed > 0 ? "Фото обработаны, но товары не распознаны. Возможно, фото слишком размытое или ценники не читаются." : null,
+  ].filter((hint): hint is string => Boolean(hint));
+  const debugSummary = [
+    `session_id: ${sessionId}`,
+    `session_status: ${sessionStatus}`,
+    `photo_counts: ${JSON.stringify(photoCounts)}`,
+    `ocr_job_counts: ${JSON.stringify(jobCounts)}`,
+    `recognized_item_counts: ${JSON.stringify(itemCounts)}`,
+    `active_matches: ${activeMatchesCount}`,
+  ].join("\n");
+
+  return (
+    <section style={{ border: "1px solid #93c5fd", borderRadius: 12, padding: "1rem", background: "#eff6ff", display: "grid", gap: "0.75rem" }}>
+      <h2 style={{ margin: 0 }}>Диагностика сессии</h2>
+      <div style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+        <MiniCounts title="Фото" counts={photoCounts} />
+        <MiniCounts title="OCR jobs" counts={jobCounts} />
+        <MiniCounts title="Товары" counts={itemCounts} />
+      </div>
+      <p style={{ margin: 0 }}>Активные matches: {activeMatchesCount}. Токены: {summary.inputTokens} input / {summary.outputTokens} output. Стоимость: {formatMicroUsd(summary.estimatedCostMicrousd)}.</p>
+      <p style={{ margin: 0 }}><Link href={`/app/monitoring/${sessionId}/review`}>Review</Link> · <Link href={`/app/monitoring/${sessionId}/export.xlsx`}>Export XLSX</Link> · <Link href={`/app/monitoring/${sessionId}/export-detailed.xlsx`}>Detailed export</Link> · <Link href="/app/ai-diagnostics">AI-диагностика</Link></p>
+      {hints.length > 0 ? <ul style={{ margin: 0 }}>{hints.map((hint) => <li key={hint}>{hint}</li>)}</ul> : null}
+      <pre style={{ background: "#fff", borderRadius: 8, margin: 0, overflowX: "auto", padding: "0.5rem" }}>{debugSummary}</pre>
+    </section>
+  );
+}
+
+function MiniCounts({ title, counts }: { title: string; counts: Record<string, number> }) {
+  return <div><strong>{title}</strong><p style={{ margin: "0.25rem 0 0" }}>{Object.entries(counts).map(([key, value]) => `${key}: ${value}`).join(" · ")}</p></div>;
+}
+
+function countStatuses(values: string[], statuses: string[]) {
+  return statuses.reduce<Record<string, number>>((counts, status) => {
+    counts[status] = values.filter((value) => value === status).length;
+    return counts;
+  }, {});
 }
 
 const cellStyle = { borderBottom: "1px solid #e5e7eb", padding: "0.5rem", textAlign: "left" as const, verticalAlign: "top" as const };

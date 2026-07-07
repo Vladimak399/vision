@@ -159,7 +159,7 @@ async function processOneRecognitionJob({
   const photoId = job.payload.photo_id;
 
   if (!photoId || job.payload.company_id !== companyId || job.payload.session_id !== sessionId) {
-    await markJobFailed(supabase, companyId, job.id, "Invalid job payload.");
+    await markJobFailed(supabase, companyId, job.id, "Некорректная задача OCR: не найден photo_id, session_id или company_id.");
     return { ok: false };
   }
 
@@ -196,7 +196,7 @@ async function processOneRecognitionJob({
   }
 
   if (photo.status !== "queued") {
-    const message = `Photo is not queued. Current status: ${photo.status}.`;
+    const message = `Фото не в статусе queued. Возможно, оно уже обрабатывается или было обработано раньше. Текущий статус: ${photo.status}.`;
     await markJobFailed(supabase, companyId, job.id, message);
     return { ok: false };
   }
@@ -281,7 +281,7 @@ async function loadPhotoAsBase64(
   const { data, error } = await supabase.storage.from(MONITORING_PHOTOS_BUCKET).download(storagePath);
 
   if (error || !data) {
-    throw new Error(error?.message ?? "Photo download failed.");
+    throw new Error(error?.message ?? "Не удалось скачать фото из Supabase Storage. Проверьте bucket monitoring-photos и права доступа.");
   }
 
   const arrayBuffer = await data.arrayBuffer();

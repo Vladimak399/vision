@@ -77,7 +77,7 @@ export default async function MonitoringPage() {
           <p style={{ margin: 0 }}>Компания: {membershipResult.membership.companyName}</p>
         </div>
         <div>
-          <Link href="/app/monitoring/new">Создать сессию мониторинга</Link>
+          <Link href="/app/monitoring/new">Создать сессию мониторинга</Link> · <Link href="/app/monitoring/test-center">Центр тестирования</Link>
         </div>
       </header>
 
