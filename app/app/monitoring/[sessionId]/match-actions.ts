@@ -18,6 +18,8 @@ type AiReviewCatalogProduct = CatalogMatchProduct & { external_sku: string | nul
 type AiReviewItem = AutoMatchRecognizedItem & { price_minor: number | null };
 type AiReviewTask = { item: AiReviewItem; candidates: ReturnType<typeof getCatalogMatchCandidates> };
 type AiReviewDecision = { item_id?: string; decision?: string; catalog_product_id?: string | null; confidence?: number; reason?: string | null };
+type BulkAcceptMatch = MatchRow & { score: number; decision: string; is_active: boolean; catalog_products: { size_text: string | null } | null };
+type BulkAcceptItem = { id: string; size_text: string | null; matches: BulkAcceptMatch[] | null };
 
 const MATCH_ROLES = new Set(["admin", "manager", "reviewer"]);
 const AI_REVIEW_LIMIT = 25;
@@ -127,7 +129,7 @@ export async function acceptHighConfidenceMatchesForSession(_state: MatchActionS
   const threshold = 0.9;
   let query = supabase
     .from("recognized_items")
-    .select("id, matches(id, score, decision, is_active, catalog_product_id)")
+    .select("id, size_text, matches(id, score, decision, is_active, catalog_product_id, catalog_products(size_text))")
     .eq("company_id", companyId)
     .eq("session_id", sessionId)
     .in("status", ["needs_review", "recognized"]);
@@ -135,14 +137,20 @@ export async function acceptHighConfidenceMatchesForSession(_state: MatchActionS
   if (department === "none") query = query.is("department", null);
   else if (department) query = query.eq("department", department);
 
-  const { data: items, error: itemsError } = await query.returns<Array<{ id: string; matches: Array<MatchRow & { score: number; decision: string; is_active: boolean }> | null }>>();
+  const { data: items, error: itemsError } = await query.returns<BulkAcceptItem[]>();
   if (itemsError) return { error: `Не удалось загрузить candidates: ${itemsError.message}` };
 
   let accepted = 0;
+  let skippedMissingSize = 0;
   const errors: string[] = [];
   for (const item of items ?? []) {
     const match = item.matches?.find((candidate) => candidate.is_active && candidate.score >= threshold && candidate.decision !== "ai_review");
     if (!match) continue;
+
+    if (shouldSkipBulkAcceptBySize(item.size_text, match.catalog_products?.size_text ?? null)) {
+      skippedMissingSize += 1;
+      continue;
+    }
 
     const { error: matchError } = await supabase.from("matches").update({ decision: "accepted", is_active: true }).eq("company_id", companyId).eq("id", match.id).eq("is_active", true);
     if (matchError) { errors.push(matchError.message); continue; }
@@ -155,7 +163,7 @@ export async function acceptHighConfidenceMatchesForSession(_state: MatchActionS
   }
 
   revalidateReview(sessionId);
-  return { message: `Принято candidates >= 90%: ${accepted}. AI-review candidates не принимаются этой кнопкой автоматически. Ошибок ${errors.length}.` };
+  return { message: `Принято candidates >= 90%: ${accepted}. Пропущено без размера OCR: ${skippedMissingSize}. AI-review candidates не принимаются этой кнопкой автоматически. Ошибок ${errors.length}.` };
 }
 
 export async function updateCatalogMatchDecision(formData: FormData): Promise<void> {
@@ -280,6 +288,14 @@ async function getMatchAuth(formData: FormData) {
   if (!session) return { ok: false as const, error: "Сессия не найдена." };
   if (["completed", "cancelled"].includes(String(session.status))) return { ok: false as const, error: "Нельзя менять товары в завершённой или отменённой сессии." };
   return { ok: true as const, companyId, department, sessionId, supabase, userId: user.id };
+}
+
+function shouldSkipBulkAcceptBySize(recognizedSize: string | null, catalogSize: string | null) {
+  return !hasText(recognizedSize) && hasText(catalogSize);
+}
+
+function hasText(value: string | null) {
+  return Boolean(value?.trim());
 }
 
 function revalidateReview(sessionId: string) {
