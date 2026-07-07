@@ -20,6 +20,16 @@ export type CatalogMatchCandidate = {
   reasons: string[];
 };
 
+type MatchFeatures = {
+  text: string;
+  tokens: string[];
+  tokenSet: Set<string>;
+  brand: string | null;
+  size: string | null;
+  familyKey: string | null;
+  trigrams: Set<string>;
+};
+
 const STOP_WORDS = new Set([
   "и",
   "в",
@@ -37,19 +47,6 @@ const STOP_WORDS = new Set([
   "или",
   "товар",
   "продукт",
-  "напиток",
-  "соус",
-  "чай",
-  "кофе",
-  "шампунь",
-  "гель",
-  "мыло",
-  "шоколад",
-  "плитка",
-  "печенье",
-  "вафли",
-  "конфеты",
-  "конфета",
   "руб",
   "рубль",
   "рублей",
@@ -57,6 +54,9 @@ const STOP_WORDS = new Set([
   "распродажа",
   "акция",
   "шт",
+  "уп",
+  "кор",
+  "блок",
 ]);
 
 const LOW_WEIGHT_TOKENS = new Set([
@@ -69,7 +69,6 @@ const LOW_WEIGHT_TOKENS = new Set([
   "лимон",
   "лайм",
   "ваниль",
-  "шоколад",
   "карамель",
   "орех",
   "орехи",
@@ -85,6 +84,40 @@ const LOW_WEIGHT_TOKENS = new Set([
   "молоко",
   "сливочный",
   "какао",
+  "классический",
+  "классическ",
+  "оригинальный",
+  "оригинальн",
+  "жареный",
+  "жарен",
+  "обжаренный",
+  "обжарен",
+  "соленый",
+  "солен",
+  "соль",
+  "морской",
+  "морск",
+]);
+
+const CORE_CATEGORY_TOKENS = new Set([
+  "семечка",
+  "вафля",
+  "трубочка",
+  "рулетик",
+  "кофе",
+  "чай",
+  "шоколад",
+  "печенье",
+  "конфета",
+  "соус",
+  "лапша",
+  "сок",
+  "напиток",
+  "шампунь",
+  "гель",
+  "мыло",
+  "порошок",
+  "паста",
 ]);
 
 const BRAND_ALIASES: Record<string, string> = {
@@ -128,6 +161,14 @@ const BRAND_ALIASES: Record<string, string> = {
   vitabar: "vitabar",
   vita: "vita",
   вита: "vita",
+  бабкины: "babkiny",
+  бабкин: "babkiny",
+  babkiny: "babkiny",
+  martin: "martin",
+  мартин: "martin",
+  мартина: "martin",
+  джинн: "djinn",
+  djinn: "djinn",
 };
 
 const TOKEN_ALIASES: Record<string, string> = {
@@ -164,6 +205,38 @@ const TOKEN_ALIASES: Record<string, string> = {
   орешками: "орех",
   шоколайт: "chocolight",
   chocolight: "chocolight",
+  семечки: "семечка",
+  семечек: "семечка",
+  семечка: "семечка",
+  семена: "семечка",
+  семя: "семечка",
+  подсолнечника: "подсолнечник",
+  подсолнечные: "подсолнечник",
+  подсолнечные: "подсолнечник",
+  полосатые: "полосатый",
+  полосатых: "полосатый",
+  полосатый: "полосатый",
+  классические: "классический",
+  классический: "классический",
+  классика: "классический",
+  жареные: "жареный",
+  жаренные: "жареный",
+  жареный: "жареный",
+  обжаренные: "жареный",
+  соленые: "соленый",
+  солёные: "соленый",
+  соленый: "соленый",
+  солью: "соль",
+  соли: "соль",
+  соль: "соль",
+  морская: "морской",
+  морской: "морской",
+  очищенные: "очищенный",
+  очищенная: "очищенный",
+  очищенный: "очищенный",
+  тыква: "тыква",
+  тыквы: "тыква",
+  тыквенные: "тыква",
 };
 
 const LATIN_TO_CYRILLIC: Record<string, string> = {
@@ -234,20 +307,20 @@ export function getCatalogMatchCandidates(
   options: { limit?: number } = {},
 ): CatalogMatchCandidate[] {
   const limit = options.limit ?? 5;
-  const recognizedText = getRecognizedText(recognized);
-  const recognizedTokens = tokenizeForMatch(recognizedText);
-  const recognizedBrand = normalizeBrand([recognized.brand, recognized.rawName, recognized.productVisibleText, recognized.priceTagText].filter(Boolean).join(" "));
-  const recognizedSize = normalizeSize(recognized.sizeText ?? recognized.rawName ?? recognized.priceTagText ?? "");
-  const recognizedTrigrams = getTrigrams(normalizeText(recognizedText));
+  const recognizedFeatures = buildRecognizedFeatures(recognized);
 
-  if (recognizedTokens.length === 0) {
+  if (recognizedFeatures.tokens.length === 0) {
     return [];
   }
 
-  return products
+  const candidates = products
     .filter((product) => product.is_active !== false)
-    .map((product) => scoreProductMatch({ product, recognizedTokens, recognizedBrand, recognizedSize, recognizedTrigrams }))
+    .map((product) => scoreProductMatch(product, recognizedFeatures))
     .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, Math.max(limit, 12));
+
+  return markSizeAmbiguity(candidates, recognizedFeatures)
     .sort((left, right) => right.score - left.score)
     .slice(0, limit);
 }
@@ -266,42 +339,33 @@ export function buildCatalogMatchKey(recognized: RecognizedMatchInput) {
   return [tokens.join(" "), size].filter(Boolean).join(" |");
 }
 
-function scoreProductMatch({
-  product,
-  recognizedTokens,
-  recognizedBrand,
-  recognizedSize,
-  recognizedTrigrams,
-}: {
-  product: CatalogMatchProduct;
-  recognizedTokens: string[];
-  recognizedBrand: string | null;
-  recognizedSize: string | null;
-  recognizedTrigrams: Set<string>;
-}): CatalogMatchCandidate {
+function scoreProductMatch(product: CatalogMatchProduct, recognizedFeatures: MatchFeatures): CatalogMatchCandidate {
   const productText = [product.name, product.brand, product.size_text].filter(Boolean).join(" ");
-  const productTokens = tokenizeForMatch(productText);
-  const productBrand = normalizeBrand([product.brand, product.name].filter(Boolean).join(" "));
-  const productSize = normalizeSize(product.size_text ?? product.name);
+  const productFeatures = buildProductFeatures(product);
   const reasons: string[] = [];
 
-  const tokenOverlap = getWeightedTokenOverlap(recognizedTokens, productTokens);
-  const trigramScore = diceCoefficient(recognizedTrigrams, getTrigrams(normalizeText(productText)));
-  let score = tokenOverlap * 0.62 + trigramScore * 0.16;
+  const tokenOverlap = getWeightedTokenOverlap(recognizedFeatures.tokens, productFeatures.tokens);
+  const trigramScore = diceCoefficient(recognizedFeatures.trigrams, productFeatures.trigrams);
+  let score = tokenOverlap * 0.58 + trigramScore * 0.12;
 
-  if (recognizedBrand && productBrand && recognizedBrand === productBrand) {
-    score += 0.13;
+  if (recognizedFeatures.brand && productFeatures.brand && recognizedFeatures.brand === productFeatures.brand) {
+    score += 0.16;
     reasons.push("brand");
   }
 
-  if (recognizedSize && productSize && recognizedSize === productSize) {
-    score += 0.11;
+  if (recognizedFeatures.familyKey && productFeatures.familyKey && recognizedFeatures.familyKey === productFeatures.familyKey) {
+    score += 0.12;
+    reasons.push("product_family");
+  }
+
+  if (recognizedFeatures.size && productFeatures.size && recognizedFeatures.size === productFeatures.size) {
+    score += 0.12;
     reasons.push("size");
-  } else if (recognizedSize && productSize && recognizedSize !== productSize) {
+  } else if (recognizedFeatures.size && productFeatures.size && recognizedFeatures.size !== productFeatures.size) {
     score -= 0.18;
     reasons.push("size_mismatch_review");
-  } else if (!recognizedSize && productSize) {
-    score -= 0.04;
+  } else if (!recognizedFeatures.size && productFeatures.size) {
+    score -= 0.02;
     reasons.push("missing_size_review");
   }
 
@@ -313,11 +377,95 @@ function scoreProductMatch({
     reasons.push("name_similarity");
   }
 
+  if (recognizedFeatures.tokenSet.has("полосатый") && productFeatures.tokenSet.has("полосатый")) {
+    score += 0.05;
+    reasons.push("variant");
+  }
+
+  if (recognizedFeatures.tokenSet.has("тыква") && productFeatures.tokenSet.has("тыква")) {
+    score += 0.08;
+    reasons.push("variant");
+  }
+
+  if (recognizedFeatures.tokenSet.has("очищенный") && productFeatures.tokenSet.has("очищенный")) {
+    score += 0.08;
+    reasons.push("variant");
+  }
+
   return {
     product,
     score: roundScore(Math.max(0, Math.min(score, 0.99))),
-    reasons,
+    reasons: Array.from(new Set(reasons)),
   };
+}
+
+function markSizeAmbiguity(candidates: CatalogMatchCandidate[], recognizedFeatures: MatchFeatures) {
+  if (recognizedFeatures.size || candidates.length < 2) {
+    return candidates;
+  }
+
+  const sizesByFamily = new Map<string, Set<string>>();
+
+  for (const candidate of candidates) {
+    if (candidate.score < 0.45) continue;
+    const productFeatures = buildProductFeatures(candidate.product);
+    if (!productFeatures.familyKey || !productFeatures.size) continue;
+    const sizes = sizesByFamily.get(productFeatures.familyKey) ?? new Set<string>();
+    sizes.add(productFeatures.size);
+    sizesByFamily.set(productFeatures.familyKey, sizes);
+  }
+
+  return candidates.map((candidate) => {
+    const productFeatures = buildProductFeatures(candidate.product);
+    if (productFeatures.familyKey && (sizesByFamily.get(productFeatures.familyKey)?.size ?? 0) > 1) {
+      return { ...candidate, reasons: Array.from(new Set([...candidate.reasons, "multiple_catalog_sizes_review"])) };
+    }
+    return candidate;
+  });
+}
+
+function buildRecognizedFeatures(recognized: RecognizedMatchInput): MatchFeatures {
+  const text = getRecognizedText(recognized);
+  const tokens = tokenizeForMatch(text);
+  const brand = normalizeBrand([recognized.brand, recognized.rawName, recognized.productVisibleText, recognized.priceTagText].filter(Boolean).join(" "));
+  const size = normalizeSize(recognized.sizeText ?? recognized.rawName ?? recognized.priceTagText ?? "");
+
+  return buildMatchFeatures({ text, tokens, brand, size });
+}
+
+function buildProductFeatures(product: CatalogMatchProduct): MatchFeatures {
+  const text = [product.name, product.brand, product.size_text].filter(Boolean).join(" ");
+  const tokens = tokenizeForMatch(text);
+  const brand = normalizeBrand([product.brand, product.name].filter(Boolean).join(" "));
+  const size = normalizeSize(product.size_text ?? product.name);
+
+  return buildMatchFeatures({ text, tokens, brand, size });
+}
+
+function buildMatchFeatures({ text, tokens, brand, size }: { text: string; tokens: string[]; brand: string | null; size: string | null }): MatchFeatures {
+  const tokenSet = new Set(tokens);
+  const familyKey = buildFamilyKey({ brand, tokenSet });
+
+  return {
+    text,
+    tokens,
+    tokenSet,
+    brand,
+    size,
+    familyKey,
+    trigrams: getTrigrams(normalizeText(text)),
+  };
+}
+
+function buildFamilyKey({ brand, tokenSet }: { brand: string | null; tokenSet: Set<string> }) {
+  const category = Array.from(CORE_CATEGORY_TOKENS).find((token) => tokenSet.has(token));
+
+  if (!brand || !category) {
+    return null;
+  }
+
+  const variantTokens = ["полосатый", "тыква", "очищенный"].filter((token) => tokenSet.has(token));
+  return [brand, category, ...variantTokens].join(":");
 }
 
 function getWeightedTokenOverlap(leftTokens: string[], rightTokens: string[]) {
@@ -326,7 +474,7 @@ function getWeightedTokenOverlap(leftTokens: string[], rightTokens: string[]) {
   let totalWeight = 0;
 
   for (const token of leftTokens) {
-    const weight = LOW_WEIGHT_TOKENS.has(token) ? 0.45 : 1;
+    const weight = getTokenWeight(token);
     totalWeight += weight;
 
     if (rightSet.has(token)) {
@@ -340,6 +488,13 @@ function getWeightedTokenOverlap(leftTokens: string[], rightTokens: string[]) {
   }
 
   return totalWeight > 0 ? matchedWeight / totalWeight : 0;
+}
+
+function getTokenWeight(token: string) {
+  if (LOW_WEIGHT_TOKENS.has(token)) return 0.35;
+  if (CORE_CATEGORY_TOKENS.has(token)) return 1.2;
+  if (Object.values(BRAND_ALIASES).includes(token)) return 1.25;
+  return 1;
 }
 
 export function normalizeText(value: string) {
