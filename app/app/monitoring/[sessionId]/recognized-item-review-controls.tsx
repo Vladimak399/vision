@@ -1,5 +1,6 @@
 import { createCorrectedCatalogMatch } from "./manual-catalog-match-actions";
 import { updateRecognizedItem, updateRecognizedItemStatus } from "./recognized-item-review-actions";
+import { SubmitButton } from "./submit-button";
 
 type CatalogSuggestion = {
   product: {
@@ -58,6 +59,7 @@ export function RecognizedItemReviewControls({ sessionId, item, suggestions = []
                 <form key={suggestion.product.id} action={createCorrectedCatalogMatch} style={suggestionStyle}>
                   <input type="hidden" name="session_id" value={sessionId} />
                   <input type="hidden" name="item_id" value={item.id} />
+                  <input type="hidden" name="catalog_product_id" value={suggestion.product.id} />
                   <input type="hidden" name="catalog_query" value={suggestion.product.external_sku ?? suggestion.product.name} />
                   <div>
                     <strong>{suggestion.product.name}</strong>
@@ -65,7 +67,7 @@ export function RecognizedItemReviewControls({ sessionId, item, suggestions = []
                       SKU: {suggestion.product.external_sku ?? "—"} · бренд: {suggestion.product.brand ?? "—"} · размер: {suggestion.product.size_text ?? "—"} · наша цена: {formatPrice(suggestion.product.own_price_minor, suggestion.product.currency)} · score: {formatPercent(suggestion.score)}
                     </p>
                   </div>
-                  <button type="submit">Связать этот товар</button>
+                  <SubmitButton pendingLabel="Связываем…">Связать этот товар</SubmitButton>
                 </form>
               ))}
             </div>
@@ -77,7 +79,7 @@ export function RecognizedItemReviewControls({ sessionId, item, suggestions = []
             <input type="hidden" name="session_id" value={sessionId} />
             <input type="hidden" name="item_id" value={item.id} />
             <input name="catalog_query" placeholder="SKU или часть названия из каталога" required style={fieldStyle} />
-            <button type="submit">Связать вручную</button>
+            <SubmitButton pendingLabel="Связываем…">Связать вручную</SubmitButton>
           </form>
         </div>
       </details>
@@ -97,7 +99,7 @@ export function RecognizedItemReviewControls({ sessionId, item, suggestions = []
           <textarea name="product_visible_text" defaultValue={item.product_visible_text ?? ""} rows={2} style={fieldStyle} />
           <textarea name="review_reason" defaultValue={item.review_reason ?? ""} rows={2} style={fieldStyle} />
           <input name="position_hint" defaultValue={item.position_hint ?? ""} style={fieldStyle} />
-          <button type="submit">Сохранить правки</button>
+          <SubmitButton>Сохранить правки</SubmitButton>
         </form>
       </details>
     </div>
@@ -110,7 +112,7 @@ function StatusForm({ sessionId, itemId, status, label }: { sessionId: string; i
       <input type="hidden" name="session_id" value={sessionId} />
       <input type="hidden" name="item_id" value={itemId} />
       <input type="hidden" name="status" value={status} />
-      <button type="submit">{label}</button>
+      <SubmitButton>{label}</SubmitButton>
     </form>
   );
 }
