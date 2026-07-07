@@ -154,7 +154,7 @@ export async function updateCatalogMatchDecision(formData: FormData): Promise<vo
 
     const { error: updateItemError } = await supabase
       .from("recognized_items")
-      .update({ status: "confirmed" })
+      .update({ status: "matched" })
       .eq("company_id", companyId)
       .eq("session_id", sessionId)
       .eq("id", match.recognized_item_id);

@@ -11,6 +11,7 @@ type ReviewStatus = "needs_review" | "confirmed" | "rejected" | "unmatched";
 
 const REVIEW_ROLES = new Set(["admin", "manager", "reviewer"]);
 const REVIEW_STATUSES = new Set<ReviewStatus>(["needs_review", "confirmed", "rejected", "unmatched"]);
+const STATUSES_THAT_CLEAR_ACTIVE_MATCH = new Set<ReviewStatus>(["needs_review", "rejected", "unmatched"]);
 
 export async function updateRecognizedItemStatus(formData: FormData): Promise<void> {
   const auth = await getReviewAuth(formData);
@@ -37,7 +38,7 @@ export async function updateRecognizedItemStatus(formData: FormData): Promise<vo
     throw new Error(`Не удалось обновить статус: ${error.message}`);
   }
 
-  if (status === "unmatched") {
+  if (STATUSES_THAT_CLEAR_ACTIVE_MATCH.has(status)) {
     const { error: matchError } = await supabase
       .from("matches")
       .update({ is_active: false })
@@ -89,6 +90,17 @@ export async function updateRecognizedItem(formData: FormData): Promise<void> {
 
   if (error) {
     throw new Error(`Не удалось сохранить правки: ${error.message}`);
+  }
+
+  const { error: matchError } = await supabase
+    .from("matches")
+    .update({ is_active: false })
+    .eq("company_id", companyId)
+    .eq("recognized_item_id", itemId)
+    .eq("is_active", true);
+
+  if (matchError) {
+    throw new Error(`Правки сохранены, но старый match не отключился: ${matchError.message}`);
   }
 
   revalidatePath(`/app/monitoring/${sessionId}`);
