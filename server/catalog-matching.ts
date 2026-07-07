@@ -44,6 +44,14 @@ const STOP_WORDS = new Set([
   "шампунь",
   "гель",
   "мыло",
+  "шоколад",
+  "плитка",
+  "руб",
+  "рубль",
+  "рублей",
+  "цена",
+  "распродажа",
+  "акция",
 ]);
 
 const FLAVOR_WORDS = new Set([
@@ -59,6 +67,9 @@ const FLAVOR_WORDS = new Set([
   "шоколад",
   "карамель",
   "орех",
+  "орехи",
+  "фундук",
+  "изюм",
   "персик",
   "манго",
   "мята",
@@ -66,6 +77,47 @@ const FLAVOR_WORDS = new Set([
   "алоэ",
   "ромашка",
 ]);
+
+const BRAND_ALIASES: Record<string, string> = {
+  milka: "milka",
+  милка: "milka",
+  nescafe: "nescafe",
+  нескафе: "nescafe",
+  nestle: "nestle",
+  нестле: "nestle",
+  jacobs: "jacobs",
+  якобс: "jacobs",
+  monarch: "monarch",
+  монарх: "monarch",
+  poetti: "poetti",
+  поэтти: "poetti",
+  поетти: "poetti",
+  jardin: "jardin",
+  жардин: "jardin",
+  jockey: "jockey",
+  жокей: "jockey",
+  lavazza: "lavazza",
+  лавацца: "lavazza",
+  лаваза: "lavazza",
+  aura: "aura",
+  аура: "aura",
+  biomio: "biomio",
+  биомио: "biomio",
+  palmolive: "palmolive",
+  палмолив: "palmolive",
+  luksja: "luksja",
+  луксжа: "luksja",
+  mixit: "mixit",
+  миксит: "mixit",
+  bucheron: "bucheron",
+  бушерон: "bucheron",
+  babyfox: "babyfox",
+  "бебифокс": "babyfox",
+  "бэйбифокс": "babyfox",
+  vitabar: "vitabar",
+  vita: "vita",
+  "вита": "vita",
+};
 
 export function getCatalogMatchCandidates(
   recognized: RecognizedMatchInput,
@@ -79,7 +131,7 @@ export function getCatalogMatchCandidates(
       .join(" "),
   );
   const recognizedTokens = tokenizeForMatch(recognizedText);
-  const recognizedBrand = normalizeText(recognized.brand ?? "");
+  const recognizedBrand = normalizeBrand([recognized.brand, recognized.rawName, recognized.productVisibleText, recognized.priceTagText].filter(Boolean).join(" "));
   const recognizedSize = normalizeSize(recognized.sizeText ?? recognized.rawName ?? "");
 
   if (recognizedTokens.length === 0) {
@@ -102,12 +154,12 @@ function scoreProductMatch({
 }: {
   product: CatalogMatchProduct;
   recognizedTokens: string[];
-  recognizedBrand: string;
+  recognizedBrand: string | null;
   recognizedSize: string | null;
 }): CatalogMatchCandidate {
   const productText = normalizeText([product.name, product.brand, product.size_text].filter(Boolean).join(" "));
   const productTokens = tokenizeForMatch(productText);
-  const productBrand = normalizeText(product.brand ?? "");
+  const productBrand = normalizeBrand([product.brand, product.name].filter(Boolean).join(" "));
   const productSize = normalizeSize(product.size_text ?? product.name);
   const reasons: string[] = [];
 
@@ -124,13 +176,18 @@ function scoreProductMatch({
     reasons.push("size");
   }
 
+  if (!recognizedSize && productSize) {
+    score -= 0.05;
+    reasons.push("missing_size_review");
+  }
+
   if (tokenOverlap > 0) {
     reasons.push("name");
   }
 
   return {
     product,
-    score: roundScore(Math.min(score, 0.99)),
+    score: roundScore(Math.max(0, Math.min(score, 0.99))),
     reasons,
   };
 }
@@ -164,6 +221,7 @@ export function normalizeText(value: string) {
 export function tokenizeForMatch(value: string) {
   return normalizeText(value)
     .split(" ")
+    .map((token) => BRAND_ALIASES[token] ?? token)
     .filter((token) => token.length > 1)
     .filter((token) => !STOP_WORDS.has(token));
 }
@@ -204,6 +262,17 @@ export function normalizeSize(value: string) {
   }
 
   return `${roundSize(amount)}pc`;
+}
+
+function normalizeBrand(value: string) {
+  const tokens = normalizeText(value).split(" ").filter(Boolean);
+
+  for (const token of tokens) {
+    const alias = BRAND_ALIASES[token];
+    if (alias) return alias;
+  }
+
+  return tokens.length === 1 ? (BRAND_ALIASES[tokens[0]] ?? tokens[0]) : null;
 }
 
 function roundScore(score: number) {
