@@ -2,12 +2,13 @@
 
 import { useActionState } from "react";
 
-import { acceptHighConfidenceMatchesForSession, suggestCatalogMatchesForSession, type MatchActionState } from "./match-actions";
+import { acceptHighConfidenceMatchesForSession, aiReviewMatchesForSession, suggestCatalogMatchesForSession, type MatchActionState } from "./match-actions";
 
 const initialState: MatchActionState = {};
 
 export function MatchControls({ sessionId, department }: { sessionId: string; department: string }) {
   const [state, formAction, isPending] = useActionState(suggestCatalogMatchesForSession, initialState);
+  const [aiState, aiAction, isAiPending] = useActionState(aiReviewMatchesForSession, initialState);
   const [acceptState, acceptAction, isAcceptPending] = useActionState(acceptHighConfidenceMatchesForSession, initialState);
 
   return (
@@ -15,15 +16,15 @@ export function MatchControls({ sessionId, department }: { sessionId: string; de
       <input type="hidden" name="session_id" value={sessionId} />
       {department !== "all" ? <input type="hidden" name="department" value={department} /> : null}
       <strong>Автоподбор из каталога</strong>
-      <p style={{ color: "#4b5563", margin: 0 }}>Подбирает кандидатов из catalog_products по текущему фильтру. Низкая уверенность останется на ручную проверку.</p>
       <button type="submit" disabled={isPending}>{isPending ? "Подбираем..." : "Подобрать кандидатов"}</button>
       {state.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{state.error}</p> : null}
       {state.message ? <p style={{ color: "#047857", margin: 0 }}>{state.message}</p> : null}
-      <div style={{ borderTop: "1px solid #e5e7eb", display: "grid", gap: "0.5rem", paddingTop: "0.5rem" }}>
-        <button formAction={acceptAction} type="submit" disabled={isAcceptPending}>{isAcceptPending ? "Принимаем..." : "Принять candidates >= 90%"}</button>
-        {acceptState.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{acceptState.error}</p> : null}
-        {acceptState.message ? <p style={{ color: "#047857", margin: 0 }}>{acceptState.message}</p> : null}
-      </div>
+      <button formAction={aiAction} type="submit" disabled={isAiPending}>{isAiPending ? "AI-review..." : "AI-review"}</button>
+      {aiState.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{aiState.error}</p> : null}
+      {aiState.message ? <p style={{ color: "#047857", margin: 0 }}>{aiState.message}</p> : null}
+      <button formAction={acceptAction} type="submit" disabled={isAcceptPending}>{isAcceptPending ? "Принимаем..." : "Принять candidates >= 90%"}</button>
+      {acceptState.error ? <p style={{ color: "#b91c1c", margin: 0 }}>{acceptState.error}</p> : null}
+      {acceptState.message ? <p style={{ color: "#047857", margin: 0 }}>{acceptState.message}</p> : null}
     </form>
   );
 }
