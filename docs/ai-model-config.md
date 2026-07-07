@@ -31,13 +31,22 @@ Use a stronger model only when photo quality is poor or recognition quality is n
 
 ## Text AI / catalog matching and reports
 
-Text tasks should be cheap by default.
+Text tasks should be cheap by default and should use an OpenAI-compatible chat completions endpoint.
 
 ```env
 AI_TEXT_PROVIDER=deepseek
 AI_TEXT_MODEL=deepseek-chat
+AI_TEXT_BASE_URL=https://api.deepseek.com/
 DEEPSEEK_API_KEY=...
 ```
+
+Alternative generic key:
+
+```env
+AI_TEXT_API_KEY=...
+```
+
+`AI_TEXT_API_KEY` has priority for the text client. If it is missing, the client falls back to the provider-specific key.
 
 Use text AI for:
 
@@ -72,6 +81,7 @@ AI_VISION_PROVIDER=openai
 AI_VISION_MODEL=gpt-5.4-mini
 AI_TEXT_PROVIDER=deepseek
 AI_TEXT_MODEL=deepseek-chat
+AI_TEXT_BASE_URL=https://api.deepseek.com/
 AI_FALLBACK_PROVIDER=openai
 AI_FALLBACK_MODEL=gpt-5.4-nano
 AI_RUN_BUDGET_USD=1
