@@ -76,6 +76,10 @@ const FLAVOR_WORDS = new Set([
   "лаванда",
   "алоэ",
   "ромашка",
+  "сгущенка",
+  "молоко",
+  "сливочный",
+  "какао",
 ]);
 
 const BRAND_ALIASES: Record<string, string> = {
@@ -96,6 +100,8 @@ const BRAND_ALIASES: Record<string, string> = {
   жардин: "jardin",
   jockey: "jockey",
   жокей: "jockey",
+  yashkino: "yashkino",
+  яшкино: "yashkino",
   lavazza: "lavazza",
   лавацца: "lavazza",
   лаваза: "lavazza",
@@ -117,6 +123,45 @@ const BRAND_ALIASES: Record<string, string> = {
   vitabar: "vitabar",
   vita: "vita",
   вита: "vita",
+};
+
+const TOKEN_ALIASES: Record<string, string> = {
+  вафли: "вафля",
+  вафел: "вафля",
+  вафля: "вафля",
+  вафельные: "вафля",
+  вафельный: "вафля",
+  вафельная: "вафля",
+  вафельных: "вафля",
+  трубочки: "трубочка",
+  трубочка: "трубочка",
+  трубочек: "трубочка",
+  рулетики: "рулетик",
+  рулетик: "рулетик",
+  сендвич: "сэндвич",
+  сэндвич: "сэндвич",
+  сандвич: "сэндвич",
+  сгущ: "сгущенка",
+  сгущенка: "сгущенка",
+  сгущеного: "сгущенка",
+  сгущенного: "сгущенка",
+  сгущенное: "сгущенка",
+  сгущенным: "сгущенка",
+  молока: "молоко",
+  молоком: "молоко",
+  молочный: "молоко",
+  молочным: "молоко",
+  молочная: "молоко",
+  ореховые: "орех",
+  ореховый: "орех",
+  ореховая: "орех",
+  ореховой: "орех",
+  орешками: "орех",
+  шоколайт: "chocolight",
+  chocolight: "chocolight",
+  минипай: "минипай",
+  "мини": "мини",
+  пай: "пай",
 };
 
 export function getCatalogMatchCandidates(
@@ -222,6 +267,7 @@ export function tokenizeForMatch(value: string) {
   const tokens = normalizeText(value)
     .split(" ")
     .map((token) => BRAND_ALIASES[token] ?? token)
+    .map((token) => TOKEN_ALIASES[token] ?? token)
     .filter((token) => token.length > 1)
     .filter((token) => !/^\d+$/.test(token))
     .filter((token) => !STOP_WORDS.has(token));
