@@ -12,8 +12,8 @@ export type AiRuntimeConfig = {
   runBudgetUsd: number;
 };
 
-const DEFAULT_VISION_PROVIDER: AiProvider = "openai";
-const DEFAULT_VISION_MODEL = "gpt-5.4-mini";
+const DEFAULT_VISION_PROVIDER: AiProvider = "gemini";
+const DEFAULT_VISION_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_TEXT_PROVIDER: AiProvider = "gemini";
 const DEFAULT_TEXT_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_FALLBACK_PROVIDER: AiProvider = "gemini";
