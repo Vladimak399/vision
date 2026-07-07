@@ -1,4 +1,5 @@
 import { getAiRuntimeConfig } from "../ai-config";
+import { AiHttpError, isAiFallbackCandidate, withAiRetry } from "../ai-retry";
 
 export type TextAiMessage = {
   role: "system" | "user" | "assistant";
@@ -55,31 +56,81 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
     throw new Error("AI_TEXT_BASE_URL is not configured.");
   }
 
+  try {
+    return await runTextModel<T>({
+      apiKey,
+      baseUrl,
+      model: aiConfig.text.model,
+      provider: aiConfig.text.provider,
+      system,
+      user,
+    });
+  } catch (error) {
+    if (
+      aiConfig.text.provider === "gemini" &&
+      aiConfig.fallback.provider === "gemini" &&
+      aiConfig.fallback.model &&
+      aiConfig.fallback.model !== aiConfig.text.model &&
+      isAiFallbackCandidate(error)
+    ) {
+      return runTextModel<T>({
+        apiKey,
+        baseUrl,
+        model: aiConfig.fallback.model,
+        provider: aiConfig.text.provider,
+        system,
+        user,
+      });
+    }
+
+    throw error;
+  }
+}
+
+async function runTextModel<T>({
+  apiKey,
+  baseUrl,
+  model,
+  provider,
+  system,
+  user,
+}: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  provider: string;
+  system: string;
+  user: string;
+}): Promise<TextAiJsonResult<T>> {
   const endpoint = new URL("chat/completions", ensureTrailingSlash(baseUrl));
   const messages: TextAiMessage[] = [
     { role: "system", content: system },
     { role: "user", content: user },
   ];
 
-  const response = await fetch(endpoint.toString(), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: aiConfig.text.model,
-      messages,
-      response_format: { type: "json_object" },
-      temperature: 0,
-    }),
+  const body = await withAiRetry(async () => {
+    const response = await fetch(endpoint.toString(), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        response_format: { type: "json_object" },
+        temperature: 0,
+      }),
+    });
+
+    const responseBody = (await response.json().catch(() => null)) as ChatCompletionsResponse | null;
+
+    if (!response.ok) {
+      throw new AiHttpError(responseBody?.error?.message || `Text AI request failed with status ${response.status}.`, response.status);
+    }
+
+    return responseBody;
   });
-
-  const body = (await response.json().catch(() => null)) as ChatCompletionsResponse | null;
-
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `Text AI request failed with status ${response.status}.`);
-  }
 
   const content = body?.choices?.[0]?.message?.content;
 
@@ -90,8 +141,8 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
   return {
     data: JSON.parse(content) as T,
     usage: {
-      provider: aiConfig.text.provider,
-      model: aiConfig.text.model,
+      provider,
+      model,
       input_tokens: body?.usage?.prompt_tokens ?? 0,
       output_tokens: body?.usage?.completion_tokens ?? 0,
     },
