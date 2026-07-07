@@ -1,6 +1,7 @@
 "use server";
 
 import { getAiRuntimeConfig } from "../../../server/ai-config";
+import { toSafeAiErrorMessage } from "../../../server/ai-retry";
 import { getCurrentUser } from "../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
 import { recognizeShelfPhoto } from "../../../server/shelf-recognition";
@@ -53,12 +54,12 @@ export async function runTextAiSmokeTest(): Promise<TextSmokeResult> {
 
     const result = await runTextAiJson<{ ok: boolean; message: string }>({
       system: "Return only strict JSON. Do not include markdown or extra text.",
-      user: 'Return JSON exactly matching this shape: {"ok":true,"message":"Короткая проверка связи выполнена"}. Do not include provider or model names.',
+      user: 'Return JSON exactly matching this shape: {"ok":true,"message":"Короткая проверка связи выполнена"}. Do not guess provider or model names.',
     });
 
     return { ok: true, data: { response: { ...result.data, provider: result.usage.provider, model: result.usage.model }, usage: result.usage } };
   } catch (error) {
-    return { ok: false, error: toSafeAiError(error, "Не удалось выполнить проверку text AI.") };
+    return { ok: false, error: toSafeAiErrorMessage(error, "Не удалось выполнить проверку text AI.") };
   }
 }
 
@@ -101,32 +102,6 @@ export async function runVisionAiSmokeTest(formData: FormData): Promise<VisionSm
       },
     };
   } catch (error) {
-    return { ok: false, error: toSafeAiError(error, "Не удалось выполнить проверку vision AI.") };
+    return { ok: false, error: toSafeAiErrorMessage(error, "Не удалось выполнить проверку vision AI.") };
   }
-}
-
-function toSafeAiError(error: unknown, fallback: string) {
-  const message = error instanceof Error ? error.message : "";
-
-  if (message.includes("GEMINI_API_KEY") || message.includes("Gemini") && message.includes("API key")) {
-    return "GEMINI_API_KEY не настроен. Добавьте переменную в Vercel Environment Variables.";
-  }
-
-  if (message.includes("OPENAI_API_KEY")) {
-    return "OPENAI_API_KEY не настроен. Добавьте переменную в Vercel Environment Variables.";
-  }
-
-  if (message.includes("DEEPSEEK_API_KEY")) {
-    return "DEEPSEEK_API_KEY не настроен. Добавьте переменную в Vercel Environment Variables.";
-  }
-
-  if (message.includes("disabled") || message.includes("unsupported")) {
-    return "AI-провайдер отключен или не поддерживается для этой проверки.";
-  }
-
-  return message && !containsSecretLikeText(message) ? `${fallback} ${message}` : fallback;
-}
-
-function containsSecretLikeText(value: string) {
-  return /sk-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{8,}|key=[^\s&]+/i.test(value);
 }
