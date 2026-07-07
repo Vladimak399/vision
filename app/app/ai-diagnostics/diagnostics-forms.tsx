@@ -8,7 +8,7 @@ const initialTextState: TextSmokeResult | null = null;
 const initialVisionState: VisionSmokeResult | null = null;
 
 export function TextSmokeForm() {
-  const [state, formAction, isPending] = useActionState(async (_previous: TextSmokeResult | null) => runTextAiSmokeTest(), initialTextState);
+  const [state, formAction, isPending] = useActionState(async () => runTextAiSmokeTest(), initialTextState);
 
   return (
     <div style={{ display: "grid", gap: "0.75rem" }}>
@@ -25,7 +25,7 @@ export function TextSmokeForm() {
 }
 
 export function VisionSmokeForm() {
-  const [state, formAction, isPending] = useActionState(async (_previous: VisionSmokeResult | null, formData: FormData) => runVisionAiSmokeTest(formData), initialVisionState);
+  const [state, formAction, isPending] = useActionState(async (_state: VisionSmokeResult | null, formData: FormData) => runVisionAiSmokeTest(formData), initialVisionState);
 
   return (
     <div style={{ display: "grid", gap: "0.75rem" }}>
