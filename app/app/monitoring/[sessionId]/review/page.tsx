@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "../../../../../lib/supabase/server";
+import { getCatalogMatchCandidates, type CatalogMatchCandidate, type CatalogMatchProduct } from "../../../../../server/catalog-matching";
 import { getCurrentUser } from "../../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../../server/primary-membership";
 import { MatchControls } from "../match-controls";
@@ -29,6 +30,8 @@ type ReviewMatch = {
     name: string;
     brand: string | null;
     size_text: string | null;
+    own_price_minor: number | null;
+    currency: string | null;
   } | null;
 };
 
@@ -65,12 +68,24 @@ type SessionRow = {
   } | null;
 };
 
+type ReviewCatalogProduct = CatalogMatchProduct & {
+  external_sku: string | null;
+  own_price_minor: number | null;
+  currency: string | null;
+};
+
+type ReviewCatalogSuggestion = Omit<CatalogMatchCandidate, "product"> & {
+  product: ReviewCatalogProduct;
+};
+
 const departmentFilters: Array<{ key: ReviewDepartmentFilter; label: string }> = [
   { key: "all", label: "Все" },
   { key: "products", label: "Продукты" },
   { key: "chemistry", label: "Химия" },
   { key: "none", label: "Без отдела" },
 ];
+
+const REVIEW_STATUSES = ["recognized", "needs_review", "matched", "confirmed", "unmatched", "rejected"];
 
 export default async function RecognizedItemsReviewPage({ params, searchParams }: ReviewPageProps) {
   const { sessionId } = await params;
@@ -118,7 +133,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
   let itemsQuery = supabase
     .from("recognized_items")
     .select(
-      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, monitoring_photos(storage_path), matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text))",
+      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, monitoring_photos(storage_path), matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text, own_price_minor, currency))",
     )
     .eq("company_id", companyId)
     .eq("session_id", sessionId);
@@ -135,7 +150,18 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
     return <PageError message={`Не удалось загрузить товары: ${itemsError.message}`} />;
   }
 
+  const { data: catalogProducts, error: catalogProductsError } = await supabase
+    .from("catalog_products")
+    .select("id, external_sku, name, brand, size_text, own_price_minor, currency, is_active")
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .limit(5000)
+    .returns<ReviewCatalogProduct[]>();
+
+  const suggestionsByItemId = buildSuggestionsByItemId(items ?? [], catalogProducts ?? []);
   const counts = getStatusCounts(items ?? []);
+  const needsReviewCount = (counts.recognized ?? 0) + (counts.needs_review ?? 0);
+  const readyCount = (counts.matched ?? 0) + (counts.confirmed ?? 0) + (counts.unmatched ?? 0);
 
   return (
     <main style={{ display: "grid", gap: "1rem", margin: "3rem auto", maxWidth: 1120, padding: "0 1rem" }}>
@@ -164,11 +190,19 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
           {Object.entries(counts).map(([status, count]) => (
             <span key={status} style={{ border: "1px solid #d1d5db", borderRadius: 999, padding: "0.25rem 0.5rem" }}>
-              {status}: {count}
+              {getStatusLabel(status)}: {count}
             </span>
           ))}
         </div>
       </header>
+
+      <section style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", background: "#f9fafb" }}>
+        <strong>Готовность к выгрузке</strong>
+        <p style={{ margin: "0.35rem 0 0", color: "#4b5563" }}>
+          Готово: {readyCount}. Требует проверки: {needsReviewCount}. Нет в ассортименте считается только по явному статусу “Нет в ассортименте”. Отсутствие match не считается отсутствием товара.
+        </p>
+        {catalogProductsError ? <p style={{ color: "#b45309", margin: "0.5rem 0 0" }}>Подсказки каталога недоступны: {catalogProductsError.message}</p> : null}
+      </section>
 
       <MatchControls sessionId={sessionId} department={departmentFilter} />
 
@@ -176,13 +210,14 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
         <div style={{ display: "grid", gap: "0.75rem" }}>
           {items.map((item) => {
             const activeMatch = getActiveMatch(item.matches);
+            const suggestions = suggestionsByItemId.get(item.id) ?? [];
 
             return (
               <article key={item.id} style={{ border: "1px solid #d1d5db", borderRadius: 12, padding: "1rem", display: "grid", gap: "0.75rem" }}>
                 <div style={{ display: "grid", gap: "0.25rem" }}>
                   <h2 style={{ margin: 0 }}>{item.raw_name}</h2>
                   <p style={{ margin: 0, color: "#4b5563" }}>
-                    Цена: {formatPrice(item.price_minor, item.currency)} · статус: {item.status} · отдел: {getDepartmentLabel(item.department)} · уверенность: {formatConfidence(item.confidence)} · связь: {formatConfidence(item.link_confidence)}
+                    Цена: {formatPrice(item.price_minor, item.currency)} · статус: {getStatusLabel(item.status)} · отдел: {getDepartmentLabel(item.department)} · уверенность: {formatConfidence(item.confidence)} · связь: {formatConfidence(item.link_confidence)}
                   </p>
                 </div>
 
@@ -200,7 +235,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
 
                 {activeMatch ? <ActiveMatchBlock sessionId={sessionId} match={activeMatch} /> : <p style={{ color: "#6b7280", margin: 0 }}>Совпадение с каталогом пока не подобрано.</p>}
 
-                <RecognizedItemReviewControls sessionId={sessionId} item={item} />
+                <RecognizedItemReviewControls sessionId={sessionId} item={item} suggestions={suggestions} />
               </article>
             );
           })}
@@ -222,7 +257,7 @@ function ActiveMatchBlock({ match, sessionId }: { match: ReviewMatch; sessionId:
       <strong>Кандидат из каталога</strong>
       <p style={{ margin: 0 }}>{product?.name ?? "Товар не найден"}</p>
       <p style={{ color: "#4b5563", margin: 0 }}>
-        Артикул: {product?.external_sku ?? "—"} · бренд: {product?.brand ?? "—"} · размер: {product?.size_text ?? "—"} · score: {formatConfidence(match.score)} · decision: {match.decision}
+        Артикул: {product?.external_sku ?? "—"} · бренд: {product?.brand ?? "—"} · размер: {product?.size_text ?? "—"} · наша цена: {formatPrice(product?.own_price_minor ?? null, product?.currency ?? "RUB")} · score: {formatConfidence(match.score)} · decision: {match.decision}
       </p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
         <form action={updateCatalogMatchDecision}>
@@ -261,11 +296,44 @@ function PageError({ message }: { message: string }) {
   );
 }
 
+function buildSuggestionsByItemId(items: ReviewItem[], products: ReviewCatalogProduct[]) {
+  const suggestions = new Map<string, ReviewCatalogSuggestion[]>();
+
+  if (products.length === 0) {
+    return suggestions;
+  }
+
+  for (const item of items) {
+    suggestions.set(
+      item.id,
+      getCatalogMatchCandidates(
+        {
+          rawName: item.raw_name,
+          brand: item.brand,
+          sizeText: item.size_text,
+          priceTagText: item.price_tag_text,
+          productVisibleText: item.product_visible_text,
+        },
+        products,
+        { limit: 10 },
+      ) as ReviewCatalogSuggestion[],
+    );
+  }
+
+  return suggestions;
+}
+
 function getStatusCounts(items: ReviewItem[]) {
-  return items.reduce<Record<string, number>>((counts, item) => {
-    counts[item.status] = (counts[item.status] ?? 0) + 1;
-    return counts;
+  const counts = REVIEW_STATUSES.reduce<Record<string, number>>((accumulator, status) => {
+    accumulator[status] = 0;
+    return accumulator;
   }, {});
+
+  for (const item of items) {
+    counts[item.status] = (counts[item.status] ?? 0) + 1;
+  }
+
+  return counts;
 }
 
 function parseDepartmentFilter(value: string | undefined): ReviewDepartmentFilter {
@@ -287,6 +355,16 @@ function getDepartmentLabel(value: string | null) {
   }
 
   return "Без отдела";
+}
+
+function getStatusLabel(status: string) {
+  if (status === "recognized") return "Распознано";
+  if (status === "needs_review") return "На проверке";
+  if (status === "matched") return "Сопоставлено";
+  if (status === "confirmed") return "OCR подтверждён";
+  if (status === "unmatched") return "Нет в ассортименте";
+  if (status === "rejected") return "Ошибка OCR";
+  return status;
 }
 
 function getActiveMatch(matches: ReviewMatch[] | null) {
