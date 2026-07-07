@@ -40,6 +40,7 @@ export default async function AppPage() {
           <Link href="/app/competitors">Конкуренты</Link>
           <Link href="/app/catalog">Каталог</Link>
           <Link href="/app/monitoring">Мониторинг</Link>
+          <Link href="/app/ai-diagnostics">AI-диагностика</Link>
         </nav>
       </div>
 
