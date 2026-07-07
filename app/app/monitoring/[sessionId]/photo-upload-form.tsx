@@ -151,9 +151,18 @@ async function preparePhoto(file: File): Promise<PreparedPhoto> {
   return { file: compressedFile, originalSize: file.size, compressed: true };
 }
 
-function createBatchFormData(form: HTMLFormElement, batch: PreparedPhoto[]) {
-  const batchFormData = new FormData(form);
-  batchFormData.delete("photos");
+function createBatchFormData(sourceFormData: FormData, batch: PreparedPhoto[]) {
+  const batchFormData = new FormData();
+  const sessionId = sourceFormData.get("session_id");
+  const department = sourceFormData.get("department");
+
+  if (typeof sessionId === "string") {
+    batchFormData.set("session_id", sessionId);
+  }
+
+  if (typeof department === "string") {
+    batchFormData.set("department", department);
+  }
 
   for (const photo of batch) {
     batchFormData.append("photos", photo.file, photo.file.name);
@@ -182,6 +191,11 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
 
     setClientError(null);
     setCompressionMessage(null);
+
+    if (!formData.get("department")) {
+      setClientError("Выберите отдел для загружаемых фото.");
+      return;
+    }
 
     if (files.length === 0) {
       setClientError("Выберите хотя бы одно фото.");
@@ -229,7 +243,7 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
 
       startTransition(() => {
         for (const batch of batches) {
-          formAction(createBatchFormData(form, batch));
+          formAction(createBatchFormData(formData, batch));
         }
       });
     } catch {
