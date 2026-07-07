@@ -42,6 +42,45 @@ export async function suggestCatalogMatchesForSession(_state: MatchActionState, 
   };
 }
 
+export async function acceptHighConfidenceMatchesForSession(_state: MatchActionState, formData: FormData): Promise<MatchActionState> {
+  const auth = await getMatchAuth(formData);
+  if (!auth.ok) return { error: auth.error };
+
+  const { companyId, department, sessionId, supabase } = auth;
+  const threshold = 0.9;
+  let query = supabase
+    .from("recognized_items")
+    .select("id, matches(id, score, decision, is_active, catalog_product_id)")
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId)
+    .in("status", ["needs_review", "recognized"]);
+
+  if (department === "none") query = query.is("department", null);
+  else if (department) query = query.eq("department", department);
+
+  const { data: items, error: itemsError } = await query.returns<Array<{ id: string; matches: Array<MatchRow & { score: number; decision: string; is_active: boolean }> | null }>>();
+  if (itemsError) return { error: `Не удалось загрузить candidates: ${itemsError.message}` };
+
+  let accepted = 0;
+  const errors: string[] = [];
+  for (const item of items ?? []) {
+    const match = item.matches?.find((candidate) => candidate.is_active && candidate.score >= threshold);
+    if (!match) continue;
+
+    const { error: matchError } = await supabase.from("matches").update({ decision: "accepted", is_active: true }).eq("company_id", companyId).eq("id", match.id).eq("is_active", true);
+    if (matchError) { errors.push(matchError.message); continue; }
+
+    const { error: itemError } = await supabase.from("recognized_items").update({ status: "matched" }).eq("company_id", companyId).eq("session_id", sessionId).eq("id", item.id);
+    if (itemError) { errors.push(itemError.message); continue; }
+
+    await saveMatchAliasForRecognizedItem({ catalogProductId: match.catalog_product_id, companyId, recognizedItemId: item.id, supabase });
+    accepted += 1;
+  }
+
+  revalidateReview(sessionId);
+  return { message: `Принято candidates >= 90%: ${accepted}. Ошибок ${errors.length}.` };
+}
+
 export async function updateCatalogMatchDecision(formData: FormData): Promise<void> {
   const auth = await getMatchAuth(formData);
   if (!auth.ok) throw new Error(auth.error);
