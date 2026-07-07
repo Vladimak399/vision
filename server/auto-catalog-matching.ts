@@ -66,7 +66,8 @@ export async function autoMatchRecognizedItems({ companyId, createdBy, items, se
 
   for (const item of items) {
     const input = toRecognizedMatchInput(item);
-    const aliasProductId = aliasMap.get(buildCatalogMatchKey(input));
+    const aliasKey = buildCatalogMatchKey(input);
+    const aliasProductId = aliasKey ? aliasMap.get(aliasKey) : null;
     const aliasProduct = aliasProductId ? productsById.get(aliasProductId) : null;
     const candidates = aliasProduct
       ? [{ product: aliasProduct, score: 0.99, reasons: ["learned_alias"] }]
@@ -79,8 +80,8 @@ export async function autoMatchRecognizedItems({ companyId, createdBy, items, se
       continue;
     }
 
-    const isAmbiguousFamily = best.reasons.includes("missing_size_review") || best.reasons.includes("multiple_catalog_sizes_review");
-    const isConfident = !isAmbiguousFamily && best.score >= AUTO_MATCH_SCORE && (!second || best.score - second.score >= AUTO_MATCH_MARGIN);
+    const hasReviewReason = best.reasons.some((reason) => reason.endsWith("_review"));
+    const isConfident = !hasReviewReason && best.score >= AUTO_MATCH_SCORE && (!second || best.score - second.score >= AUTO_MATCH_MARGIN);
 
     const { error: disableError } = await supabase
       .from("matches")
