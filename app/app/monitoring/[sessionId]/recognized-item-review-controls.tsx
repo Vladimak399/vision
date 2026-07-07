@@ -66,6 +66,11 @@ export function RecognizedItemReviewControls({ sessionId, item, suggestions = []
                     <p style={{ color: "#4b5563", margin: "0.2rem 0 0" }}>
                       SKU: {suggestion.product.external_sku ?? "—"} · бренд: {suggestion.product.brand ?? "—"} · размер: {suggestion.product.size_text ?? "—"} · наша цена: {formatPrice(suggestion.product.own_price_minor, suggestion.product.currency)} · score: {formatPercent(suggestion.score)}
                     </p>
+                    {suggestion.reasons.length > 0 ? (
+                      <p style={{ color: "#6b7280", margin: "0.2rem 0 0" }}>
+                        Причины: {suggestion.reasons.map(getReasonLabel).join(", ")}
+                      </p>
+                    ) : null}
                   </div>
                   <SubmitButton pendingLabel="Связываем…">Связать этот товар</SubmitButton>
                 </form>
@@ -127,4 +132,18 @@ function formatPrice(value: number | null, currency: string | null) {
 
 function formatPercent(value: number | null) {
   return value === null || !Number.isFinite(value) ? "—" : `${Math.round(value * 100)}%`;
+}
+
+function getReasonLabel(reason: string) {
+  if (reason === "brand") return "бренд совпал";
+  if (reason === "product_family") return "семейство товара";
+  if (reason === "size") return "размер совпал";
+  if (reason === "missing_size_review") return "на фото нет размера";
+  if (reason === "multiple_catalog_sizes_review") return "несколько размеров";
+  if (reason === "size_mismatch_review") return "размер отличается";
+  if (reason === "name_tokens") return "слова совпали";
+  if (reason === "name_similarity") return "похожее название";
+  if (reason === "variant") return "вариант совпал";
+  if (reason === "learned_alias") return "выученная связка";
+  return reason;
 }
