@@ -6,7 +6,7 @@ import { uploadMonitoringPhotos, type MonitoringPhotoUploadState } from "../acti
 
 const initialState: MonitoringPhotoUploadState = {};
 const MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
-const MAX_UPLOAD_BATCH_BYTES = 9 * 1024 * 1024;
+const MAX_UPLOAD_BATCH_BYTES = 25 * 1024 * 1024;
 const COMPRESSION_TARGET_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_LONG_SIDE = 2400;
 const JPEG_QUALITY_STEPS = [0.9, 0.86, 0.82] as const;
@@ -176,6 +176,7 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
   const [clientError, setClientError] = useState<string | null>(null);
   const [compressionMessage, setCompressionMessage] = useState<string | null>(null);
   const [isPreparing, setIsPreparing] = useState(false);
+  const [selectedFilesCount, setSelectedFilesCount] = useState(0);
   const isBusy = isPending || isPreparing;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -273,9 +274,11 @@ export function MonitoringPhotoUploadForm({ sessionId }: { sessionId: string }) 
           multiple
           required
           disabled={isBusy}
+          onChange={(event) => setSelectedFilesCount(event.currentTarget.files?.length ?? 0)}
         />
       </label>
-      <p style={{ color: "#4b5563", margin: 0 }}>Выбери отдел и загрузи пачку фото. Для другого отдела загрузи отдельную пачку.</p>
+      <p style={{ color: "#4b5563", margin: 0 }}>Выбери отдел и сразу несколько фото. После загрузки нажми “Распознать новые фото”.</p>
+      {selectedFilesCount > 0 ? <p style={{ color: "#047857", margin: 0 }}>Выбрано фото: {selectedFilesCount}.</p> : null}
       {isPreparing ? <p style={{ color: "#4b5563", margin: 0 }}>Подготавливаем фото…</p> : null}
       {compressionMessage ? <p style={{ color: "#4b5563", margin: 0 }}>{compressionMessage}</p> : null}
       {clientError ? <p style={{ color: "#b91c1c", margin: 0 }}>{clientError}</p> : null}
