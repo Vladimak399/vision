@@ -5,6 +5,7 @@ import {
   Building2,
   LogOut,
   PackageSearch,
+  Settings,
   UploadCloud,
 } from "lucide-react";
 
@@ -17,12 +18,20 @@ import { logout } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-const workflowSteps = [
-  "Импорт ассортимента",
-  "Создание сессии",
-  "Загрузка фото",
-  "Review спорных товаров",
-  "Экспорт Excel",
+const workerSteps = [
+  "Открыть или создать сессию",
+  "Загрузить фото магазина",
+  "Распознать фото",
+  "Проверить спорные товары",
+  "Выгрузить Excel",
+];
+
+const adminSteps = [
+  "Загрузить актуальный каталог",
+  "Создать сессию мониторинга",
+  "Проверить распознавание и спорные товары",
+  "Выгрузить Excel",
+  "При необходимости открыть диагностику",
 ];
 
 export default async function AppPage() {
@@ -42,27 +51,44 @@ export default async function AppPage() {
 
   const currentMembership = memberships[0];
   const hasMultipleCompanies = memberships.length > 1;
+  const canManageWorkspace = currentMembership
+    ? ["admin", "manager"].includes(currentMembership.role)
+    : false;
+  const steps = canManageWorkspace ? adminSteps : workerSteps;
   const quickLinks = [
     {
       href: "/app/monitoring/new",
       title: "Создать мониторинг",
-      text: "Новая сессия, загрузка фото полок и запуск распознавания.",
+      text: "Новая сессия для магазина: фото, распознавание, проверка, Excel.",
       icon: BarChart3,
       primary: true,
-    },
-    {
-      href: "/app/catalog/import",
-      title: "Импортировать каталог",
-      text: "Загрузите CSV/XLSX с ассортиментом перед проверкой совпадений.",
-      icon: UploadCloud,
+      adminOnly: false,
     },
     {
       href: "/app/monitoring",
       title: "Открыть сессии",
-      text: "Продолжите проверку, обработку фото или экспорт Excel.",
+      text: "Продолжить загрузку фото, проверку товаров или выгрузку Excel.",
       icon: PackageSearch,
+      primary: false,
+      adminOnly: false,
     },
-  ];
+    {
+      href: "/app/catalog/import",
+      title: "Импортировать каталог",
+      text: "Загрузить CSV/XLSX с актуальным ассортиментом перед мониторингом.",
+      icon: UploadCloud,
+      primary: false,
+      adminOnly: true,
+    },
+    {
+      href: "/app/ai-diagnostics",
+      title: "Диагностика",
+      text: "Проверить AI/OCR и технические сценарии. Не нужно обычному сотруднику.",
+      icon: Settings,
+      primary: false,
+      adminOnly: true,
+    },
+  ].filter((item) => canManageWorkspace || !item.adminOnly);
 
   return (
     <div className="shell">
@@ -72,11 +98,11 @@ export default async function AppPage() {
             PriceVision
           </Link>
           <nav className="nav" aria-label="Основные разделы">
-            <Link href="/app/catalog">Каталог</Link>
             <Link href="/app/monitoring">Мониторинг</Link>
-            <Link href="/app/stores">Магазины</Link>
-            <Link href="/app/competitors">Конкуренты</Link>
-            <Link href="/app/ai-diagnostics">AI</Link>
+            {canManageWorkspace ? <Link href="/app/catalog">Каталог</Link> : null}
+            {canManageWorkspace ? <Link href="/app/stores">Магазины</Link> : null}
+            {canManageWorkspace ? <Link href="/app/competitors">Конкуренты</Link> : null}
+            {canManageWorkspace ? <Link href="/app/ai-diagnostics">Диагностика</Link> : null}
           </nav>
         </div>
       </header>
@@ -85,10 +111,11 @@ export default async function AppPage() {
           <div className="hero" style={{ position: "relative", zIndex: 1 }}>
             <div>
               <p className="eyebrow">Рабочая область</p>
-              <h1>Мониторинг цен по фото без лишних шагов</h1>
+              <h1>Мониторинг цен по фото</h1>
               <p className="lead">
-                Вы вошли как {user.email ?? "пользователь без email"}. Начните с
-                главного действия или перейдите в нужный раздел через верхнюю навигацию.
+                Вы вошли как {user.email ?? "пользователь без email"}. В основном
+                рабочем сценарии нужны только сессии мониторинга: фото,
+                распознавание, проверка и Excel.
               </p>
             </div>
             <form action={logout}>
@@ -115,7 +142,11 @@ export default async function AppPage() {
               <div>
                 <p className="eyebrow">Текущий контекст</p>
                 <h2>{currentMembership.companyName}</h2>
-                <p className="lead">Роль в компании: {currentMembership.role}</p>
+                <p className="lead">
+                  Роль: {getRoleLabel(currentMembership.role)}. {canManageWorkspace
+                    ? "Вам доступны каталог, магазины и диагностика."
+                    : "Вам доступен рабочий поток мониторинга без технических разделов."}
+                </p>
               </div>
               <span className="badge badge-ok">
                 <Building2 size={14} />
@@ -147,7 +178,7 @@ export default async function AppPage() {
                 <div className="actions">
                   <span className={item.primary ? "badge badge-info" : "badge badge-neutral"}>
                     <Icon size={14} />
-                    {item.primary ? "Главный шаг" : "Быстро"}
+                    {item.primary ? "Главный шаг" : item.adminOnly ? "Админ" : "Быстро"}
                   </span>
                 </div>
                 <h2 style={{ marginTop: ".9rem" }}>{item.title}</h2>
@@ -161,14 +192,15 @@ export default async function AppPage() {
           <div className="hero">
             <div>
               <p className="eyebrow">Навигация по процессу</p>
-              <h2>Типовой поток работы</h2>
+              <h2>{canManageWorkspace ? "Процесс для менеджера" : "Процесс для сотрудника"}</h2>
               <p className="lead">
-                Эти шаги помогают команде не теряться: от подготовки каталога до отчета с evidence.
+                Основной экран не должен показывать техническую механику. Для
+                сотрудника остается только маршрут от фото к Excel.
               </p>
             </div>
           </div>
           <ol className="step-list" style={{ marginTop: "1rem" }}>
-            {workflowSteps.map((step) => (
+            {steps.map((step) => (
               <li key={step}>
                 <strong>{step}</strong>
               </li>
@@ -178,4 +210,11 @@ export default async function AppPage() {
       </main>
     </div>
   );
+}
+
+function getRoleLabel(role: string) {
+  if (role === "admin") return "администратор";
+  if (role === "manager") return "менеджер";
+  if (role === "reviewer") return "сотрудник мониторинга";
+  return role;
 }

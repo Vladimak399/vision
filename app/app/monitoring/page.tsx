@@ -46,6 +46,9 @@ export default async function MonitoringPage() {
     return <NoAccess />;
   }
 
+  const canUseTechnicalTools = ["admin", "manager"].includes(
+    membershipResult.membership.role,
+  );
   const supabase = await createSupabaseServerClient();
   const { data: sessions, error } = await supabase
     .from("monitoring_sessions")
@@ -89,20 +92,18 @@ export default async function MonitoringPage() {
           <h1>Сессии мониторинга</h1>
           <p className="lead">
             Компания: {membershipResult.membership.companyName}. Создайте
-            сессию, загрузите фото и переходите к проверке только спорных
-            совпадений.
+            сессию, загрузите фото, проверьте спорные товары и выгрузите Excel.
           </p>
         </div>
         <div className="actions">
           <Link className="btn" href="/app/monitoring/new">
             Создать сессию
           </Link>
-          <Link
-            className="btn btn-secondary"
-            href="/app/monitoring/test-center"
-          >
-            Центр тестирования
-          </Link>
+          {canUseTechnicalTools ? (
+            <Link className="btn btn-secondary" href="/app/monitoring/test-center">
+              Центр тестирования
+            </Link>
+          ) : null}
         </div>
       </header>
 
