@@ -1,4 +1,4 @@
-export type AiProvider = "openai" | "deepseek" | "disabled";
+export type AiProvider = "openai" | "deepseek" | "gemini" | "disabled";
 
 export type AiTaskConfig = {
   provider: AiProvider;
@@ -12,12 +12,12 @@ export type AiRuntimeConfig = {
   runBudgetUsd: number;
 };
 
-const DEFAULT_VISION_PROVIDER: AiProvider = "openai";
-const DEFAULT_VISION_MODEL = "gpt-5.4-mini";
-const DEFAULT_TEXT_PROVIDER: AiProvider = "deepseek";
-const DEFAULT_TEXT_MODEL = "deepseek-chat";
-const DEFAULT_FALLBACK_PROVIDER: AiProvider = "openai";
-const DEFAULT_FALLBACK_MODEL = "gpt-5.4-nano";
+const DEFAULT_VISION_PROVIDER: AiProvider = "gemini";
+const DEFAULT_VISION_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_TEXT_PROVIDER: AiProvider = "gemini";
+const DEFAULT_TEXT_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_FALLBACK_PROVIDER: AiProvider = "gemini";
+const DEFAULT_FALLBACK_MODEL = "gemini-2.5-flash";
 const DEFAULT_RUN_BUDGET_USD = 1;
 
 export function getAiRuntimeConfig(): AiRuntimeConfig {
@@ -50,10 +50,14 @@ export function assertAiProviderKey(provider: AiProvider) {
   if (provider === "deepseek" && !process.env.DEEPSEEK_API_KEY) {
     throw new Error("DEEPSEEK_API_KEY is not configured.");
   }
+
+  if (provider === "gemini" && !process.env.GEMINI_API_KEY && !process.env.AI_TEXT_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
 }
 
 function parseProvider(value: string | undefined, fallback: AiProvider): AiProvider {
-  if (value === "openai" || value === "deepseek" || value === "disabled") {
+  if (value === "openai" || value === "deepseek" || value === "gemini" || value === "disabled") {
     return value;
   }
 

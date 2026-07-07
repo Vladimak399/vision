@@ -5,11 +5,10 @@ import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { getServerEnv } from "../../../lib/env";
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { getCurrentUser } from "../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
-import { recognizeShelfPhotoWithOpenAI } from "../../../server/shelf-recognition/openai";
+import { getShelfRecognitionMissingKeyMessage, hasShelfRecognitionKey, recognizeShelfPhoto } from "../../../server/shelf-recognition";
 import type { ShelfRecognitionItem } from "../../../server/shelf-recognition/types";
 
 type QueueJobPayload = {
@@ -41,7 +40,8 @@ export type ProcessQueueState = {
   message?: string;
 };
 
-const OCR_BATCH_SIZE = 10;
+const DEFAULT_OCR_BATCH_SIZE = 10;
+const MAX_OCR_BATCH_SIZE = 10;
 const MONITORING_PHOTOS_BUCKET = "monitoring-photos";
 
 export async function processQueuedRecognitionJobs(
@@ -49,6 +49,7 @@ export async function processQueuedRecognitionJobs(
   formData: FormData,
 ): Promise<ProcessQueueState> {
   const sessionId = String(formData.get("session_id") ?? "").trim();
+  const ocrLimit = parseOcrLimit(formData.get("ocr_limit"));
   const nextPath = sessionId ? `/app/monitoring/${encodeURIComponent(sessionId)}` : "/app/monitoring";
   const user = await getCurrentUser();
 
@@ -75,9 +76,8 @@ export async function processQueuedRecognitionJobs(
     return { error: "Не указана сессия мониторинга." };
   }
 
-  const env = getServerEnv();
-  if (!env.OPENAI_API_KEY) {
-    return { error: "Ключ распознавания не настроен. Очередь и фото не изменены." };
+  if (!hasShelfRecognitionKey()) {
+    return { error: `${getShelfRecognitionMissingKeyMessage()} Очередь и фото не изменены.` };
   }
 
   const companyId = membershipResult.membership.companyId;
@@ -110,7 +110,7 @@ export async function processQueuedRecognitionJobs(
     .eq("status", "queued")
     .lte("run_after", new Date().toISOString())
     .order("created_at", { ascending: true })
-    .limit(OCR_BATCH_SIZE)
+    .limit(ocrLimit)
     .returns<QueueJobRow[]>();
 
   if (jobsError) {
@@ -142,7 +142,7 @@ export async function processQueuedRecognitionJobs(
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
   revalidatePath(`/app/monitoring/${sessionId}/review`);
-  return { message: `Обработана пачка: успешно ${processed}, ошибок ${failed}, пропущено ${skipped}.` };
+  return { message: `Обработано фото: успешно ${processed}, ошибок ${failed}, пропущено ${skipped}. Лимит запуска: ${ocrLimit}.` };
 }
 
 async function processOneRecognitionJob({
@@ -219,7 +219,7 @@ async function processOneRecognitionJob({
 
   try {
     const image = await loadPhotoAsBase64(supabase, photo.storage_path);
-    const recognition = await recognizeShelfPhotoWithOpenAI(image);
+    const recognition = await recognizeShelfPhoto(image);
     const rows = buildRecognizedItemRows({ companyId, sessionId, photoId, items: recognition.items });
 
     if (rows.length > 0) {
@@ -402,4 +402,14 @@ async function markJobFailed(
     .update({ status: "failed", error })
     .eq("company_id", companyId)
     .eq("id", jobId);
+}
+
+function parseOcrLimit(value: FormDataEntryValue | null) {
+  const parsed = Number(String(value ?? ""));
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_OCR_BATCH_SIZE;
+  }
+
+  return Math.min(Math.floor(parsed), MAX_OCR_BATCH_SIZE);
 }
