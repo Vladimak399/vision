@@ -23,14 +23,16 @@ export function MatchControls({ sessionId, department }: { sessionId: string; de
       <div style={{ display: "grid", gap: "0.35rem" }}>
         <strong>Автоподбор и проверка</strong>
         <p style={{ color: "#4b5563", margin: 0 }}>
-          Порядок работы: 1) подобрать кандидатов, 2) проверить строки без кандидата, 3) запустить AI-review только для спорных, 4) вручную принять безопасные совпадения, 5) выгрузить detailed Excel.
+          Порядок работы: 1) подобрать кандидатов, 2) проверить строки без кандидата, 3) запустить AI-review только для спорных, 4) вручную принять безопасные совпадения, 5) выгрузить Excel.
         </p>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+        <Link href={`/app/monitoring/${sessionId}`} style={pillStyle}>Сессия</Link>
         <Link href={reviewHref} style={pillStyle}>Все строки</Link>
         <Link href={withoutCandidateHref} style={pillStyle}>Без кандидата</Link>
         <Link href={withCandidateHref} style={pillStyle}>С кандидатом</Link>
+        <a href={`/app/monitoring/${sessionId}/export.xlsx`} style={pillStyle}>Короткий Excel</a>
         <a href={`/app/monitoring/${sessionId}/export-detailed.xlsx`} style={pillStyle}>Detailed Excel</a>
       </div>
 
