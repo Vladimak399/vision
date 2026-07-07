@@ -73,11 +73,7 @@ export function LoginForm() {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="grid"
-      style={{ maxWidth: 420, marginTop: "1.25rem" }}
-    >
+    <form onSubmit={handleSubmit} className="grid">
       <label className="field">
         <span>Email</span>
         <input
@@ -110,7 +106,7 @@ export function LoginForm() {
       ) : null}
 
       <button disabled={isLoading} type="submit">
-        {isLoading ? "Входим…" : "Войти"}
+        {isLoading ? "Проверяем доступ…" : "Войти в PriceVision"}
       </button>
     </form>
   );
