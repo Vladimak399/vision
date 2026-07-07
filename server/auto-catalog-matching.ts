@@ -30,14 +30,9 @@ export type AutoMatchStats = {
 const AUTO_MATCH_SCORE = 0.9;
 const AUTO_MATCH_MARGIN = 0.08;
 const SUGGESTION_SCORE = 0.66;
+const FAMILY_SUGGESTION_SCORE = 0.52;
 
-export async function autoMatchRecognizedItems({
-  companyId,
-  createdBy,
-  items,
-  sessionId,
-  supabase,
-}: {
+export async function autoMatchRecognizedItems({ companyId, createdBy, items, sessionId, supabase }: {
   companyId: string;
   createdBy?: string | null;
   items: AutoMatchRecognizedItem[];
@@ -46,9 +41,7 @@ export async function autoMatchRecognizedItems({
 }): Promise<AutoMatchStats> {
   const stats: AutoMatchStats = { items: items.length, autoMatched: 0, suggested: 0, noCandidate: 0, errors: [] };
 
-  if (items.length === 0) {
-    return stats;
-  }
+  if (items.length === 0) return stats;
 
   const { data: products, error: productsError } = await supabase
     .from("catalog_products")
@@ -77,17 +70,17 @@ export async function autoMatchRecognizedItems({
     const aliasProduct = aliasProductId ? productsById.get(aliasProductId) : null;
     const candidates = aliasProduct
       ? [{ product: aliasProduct, score: 0.99, reasons: ["learned_alias"] }]
-      : getCatalogMatchCandidates(input, products, { limit: 2 });
-
+      : getCatalogMatchCandidates(input, products, { limit: 5 });
     const best = candidates[0];
     const second = candidates[1];
 
-    if (!best || best.score < SUGGESTION_SCORE) {
+    if (!best || !isSuggestionCandidate(best)) {
       stats.noCandidate += 1;
       continue;
     }
 
-    const isConfident = best.score >= AUTO_MATCH_SCORE && (!second || best.score - second.score >= AUTO_MATCH_MARGIN);
+    const isAmbiguousFamily = best.reasons.includes("missing_size_review") || best.reasons.includes("multiple_catalog_sizes_review");
+    const isConfident = !isAmbiguousFamily && best.score >= AUTO_MATCH_SCORE && (!second || best.score - second.score >= AUTO_MATCH_MARGIN);
 
     const { error: disableError } = await supabase
       .from("matches")
@@ -123,12 +116,10 @@ export async function autoMatchRecognizedItems({
         .eq("company_id", companyId)
         .eq("session_id", sessionId)
         .eq("id", item.id);
-
       if (updateError) {
         stats.errors.push(`Match создан, но статус не обновился для ${item.id}: ${updateError.message}`);
         continue;
       }
-
       stats.autoMatched += 1;
     } else {
       stats.suggested += 1;
@@ -136,6 +127,11 @@ export async function autoMatchRecognizedItems({
   }
 
   return stats;
+}
+
+function isSuggestionCandidate(candidate: { score: number; reasons: string[] }) {
+  if (candidate.score >= SUGGESTION_SCORE) return true;
+  return candidate.score >= FAMILY_SUGGESTION_SCORE && candidate.reasons.includes("product_family");
 }
 
 function toRecognizedMatchInput(item: AutoMatchRecognizedItem): RecognizedMatchInput {
