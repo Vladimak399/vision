@@ -17,6 +17,14 @@ import { logout } from "./actions";
 
 export const dynamic = "force-dynamic";
 
+const workflowSteps = [
+  "Импорт ассортимента",
+  "Создание сессии",
+  "Загрузка фото",
+  "Review спорных товаров",
+  "Экспорт Excel",
+];
+
 export default async function AppPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=/app");
@@ -38,7 +46,7 @@ export default async function AppPage() {
     {
       href: "/app/monitoring/new",
       title: "Создать мониторинг",
-      text: "Начните новую сессию, загрузите фото полок и запустите распознавание.",
+      text: "Новая сессия, загрузка фото полок и запуск распознавания.",
       icon: BarChart3,
       primary: true,
     },
@@ -73,22 +81,23 @@ export default async function AppPage() {
         </div>
       </header>
       <main className="page">
-        <section className="hero">
-          <div>
-            <p className="eyebrow">Рабочая область</p>
-            <h1>Мониторинг цен по фото без лишних шагов</h1>
-            <p className="lead">
-              Вы вошли как {user.email ?? "пользователь без email"}. Выберите
-              следующее действие: создать сессию, импортировать ассортимент или
-              продолжить проверку.
-            </p>
+        <section className="hero-panel">
+          <div className="hero" style={{ position: "relative", zIndex: 1 }}>
+            <div>
+              <p className="eyebrow">Рабочая область</p>
+              <h1>Мониторинг цен по фото без лишних шагов</h1>
+              <p className="lead">
+                Вы вошли как {user.email ?? "пользователь без email"}. Начните с
+                главного действия или перейдите в нужный раздел через верхнюю навигацию.
+              </p>
+            </div>
+            <form action={logout}>
+              <button className="secondary" type="submit">
+                <LogOut size={16} />
+                Выйти
+              </button>
+            </form>
           </div>
-          <form action={logout}>
-            <button className="secondary" type="submit">
-              <LogOut size={16} />
-              Выйти
-            </button>
-          </form>
         </section>
 
         {membershipError ? (
@@ -104,11 +113,9 @@ export default async function AppPage() {
           <section className="card">
             <div className="hero">
               <div>
-                <h2>Текущая компания</h2>
-                <p className="lead">
-                  {currentMembership.companyName} · роль{" "}
-                  {currentMembership.role}
-                </p>
+                <p className="eyebrow">Текущий контекст</p>
+                <h2>{currentMembership.companyName}</h2>
+                <p className="lead">Роль в компании: {currentMembership.role}</p>
               </div>
               <span className="badge badge-ok">
                 <Building2 size={14} />
@@ -132,27 +139,18 @@ export default async function AppPage() {
           </section>
         )}
 
-        <section className="grid grid-2">
+        <section className="grid grid-3" aria-label="Быстрые действия">
           {quickLinks.map((item) => {
             const Icon = item.icon;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="card"
-                style={{ textDecoration: "none", color: "inherit" }}
-              >
+              <Link key={item.href} href={item.href} className="card">
                 <div className="actions">
-                  <span
-                    className={
-                      item.primary ? "badge badge-info" : "badge badge-neutral"
-                    }
-                  >
+                  <span className={item.primary ? "badge badge-info" : "badge badge-neutral"}>
                     <Icon size={14} />
                     {item.primary ? "Главный шаг" : "Быстро"}
                   </span>
                 </div>
-                <h2 style={{ marginTop: ".8rem" }}>{item.title}</h2>
+                <h2 style={{ marginTop: ".9rem" }}>{item.title}</h2>
                 <p className="muted">{item.text}</p>
               </Link>
             );
@@ -160,23 +158,22 @@ export default async function AppPage() {
         </section>
 
         <section className="card soft">
-          <h2>Типовой поток</h2>
-          <div className="stats" style={{ marginTop: "1rem" }}>
-            {[
-              "Импорт ассортимента",
-              "Создание сессии",
-              "Загрузка фото",
-              "Review спорных товаров",
-              "Экспорт Excel",
-            ].map((step, index) => (
-              <div className="stat" key={step}>
-                <span className="badge badge-neutral">{index + 1}</span>
-                <p>
-                  <strong>{step}</strong>
-                </p>
-              </div>
-            ))}
+          <div className="hero">
+            <div>
+              <p className="eyebrow">Навигация по процессу</p>
+              <h2>Типовой поток работы</h2>
+              <p className="lead">
+                Эти шаги помогают команде не теряться: от подготовки каталога до отчета с evidence.
+              </p>
+            </div>
           </div>
+          <ol className="step-list" style={{ marginTop: "1rem" }}>
+            {workflowSteps.map((step) => (
+              <li key={step}>
+                <strong>{step}</strong>
+              </li>
+            ))}
+          </ol>
         </section>
       </main>
     </div>
