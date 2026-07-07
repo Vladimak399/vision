@@ -137,12 +137,15 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
     .eq("kind", "photo_ocr")
     .returns<RecognitionJob[]>();
 
-  const { count: activeMatchesCount } = await supabase
-    .from("matches")
-    .select("id", { count: "exact", head: true })
-    .eq("company_id", companyId)
-    .eq("is_active", true)
-    .in("recognized_item_id", (recognizedItems ?? []).map((item) => item.id));
+  const recognizedItemIds = (recognizedItems ?? []).map((item) => item.id);
+  const activeMatchesCount = recognizedItemIds.length > 0
+    ? (await supabase
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .in("recognized_item_id", recognizedItemIds)).count ?? 0
+    : 0;
 
   const photoOptions = (photos ?? []).map((photo) => ({
     id: photo.id,
@@ -181,7 +184,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
 
       {canCreateManualItems ? (
         <SessionDiagnosticsPanel
-          activeMatchesCount={activeMatchesCount ?? 0}
+          activeMatchesCount={activeMatchesCount}
           jobs={recognitionJobs ?? []}
           photos={photos ?? []}
           recognizedItems={recognizedItems ?? []}
@@ -307,7 +310,6 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
     </main>
   );
 }
-
 
 function SessionDiagnosticsPanel({
   activeMatchesCount,
