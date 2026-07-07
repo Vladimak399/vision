@@ -18,6 +18,7 @@ const MANUAL_MATCH_ROLES = new Set(["admin", "manager", "reviewer"]);
 export async function createCorrectedCatalogMatch(formData: FormData): Promise<void> {
   const sessionId = String(formData.get("session_id") ?? "").trim();
   const itemId = String(formData.get("item_id") ?? "").trim();
+  const productId = String(formData.get("catalog_product_id") ?? "").trim();
   const query = String(formData.get("catalog_query") ?? "").trim();
   const user = await getCurrentUser();
 
@@ -29,8 +30,8 @@ export async function createCorrectedCatalogMatch(formData: FormData): Promise<v
     throw new Error("Не указана сессия или товар.");
   }
 
-  if (query.length < 3) {
-    throw new Error("Введите SKU или минимум 3 символа названия из каталога.");
+  if (!productId && query.length < 3) {
+    throw new Error("Выберите товар из подсказок, введите SKU или минимум 3 символа названия из каталога.");
   }
 
   let membershipResult;
@@ -85,7 +86,7 @@ export async function createCorrectedCatalogMatch(formData: FormData): Promise<v
     throw new Error("Распознанный товар не найден.");
   }
 
-  const product = await findCatalogProduct({ companyId, query, supabase });
+  const product = await findCatalogProduct({ companyId, productId, query, supabase });
 
   const { error: disableMatchError } = await supabase
     .from("matches")
@@ -129,13 +130,36 @@ export async function createCorrectedCatalogMatch(formData: FormData): Promise<v
 
 async function findCatalogProduct({
   companyId,
+  productId,
   query,
   supabase,
 }: {
   companyId: string;
+  productId: string;
   query: string;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
 }) {
+  if (productId) {
+    const { data: product, error: productError } = await supabase
+      .from("catalog_products")
+      .select("id, external_sku, name")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .eq("id", productId)
+      .maybeSingle()
+      .returns<CatalogProductRow | null>();
+
+    if (productError) {
+      throw new Error(`Не удалось найти выбранный товар: ${productError.message}`);
+    }
+
+    if (!product) {
+      throw new Error("Выбранный товар не найден в каталоге текущей компании.");
+    }
+
+    return product;
+  }
+
   const { data: skuMatches, error: skuError } = await supabase
     .from("catalog_products")
     .select("id, external_sku, name")
@@ -178,5 +202,5 @@ async function findCatalogProduct({
 }
 
 function escapeLike(value: string) {
-  return value.replace(/[\\%_]/g, (symbol) => `\\${symbol}`);
+  return value.replace(/[\%_]/g, (symbol) => `\${symbol}`);
 }
