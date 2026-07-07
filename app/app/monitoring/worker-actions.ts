@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
+import { autoMatchRecognizedItems, type AutoMatchRecognizedItem, type AutoMatchStats } from "../../../server/auto-catalog-matching";
 import { getCurrentUser } from "../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
 import { getShelfRecognitionMissingKeyMessage, hasShelfRecognitionKey, recognizeShelfPhoto } from "../../../server/shelf-recognition";
@@ -33,6 +34,7 @@ type MonitoringPhotoRow = {
 type RecognitionJobResult = {
   ok: boolean;
   skipped?: boolean;
+  autoMatch?: AutoMatchStats;
 };
 
 export type ProcessQueueState = {
@@ -124,14 +126,20 @@ export async function processQueuedRecognitionJobs(
   let processed = 0;
   let failed = 0;
   let skipped = 0;
+  let autoMatched = 0;
+  let suggested = 0;
+  let noCandidate = 0;
 
   for (const job of jobs) {
-    const result = await processOneRecognitionJob({ companyId, sessionId, job, supabase });
+    const result = await processOneRecognitionJob({ companyId, sessionId, job, supabase, userId: user.id });
 
     if (result.skipped) {
       skipped += 1;
     } else if (result.ok) {
       processed += 1;
+      autoMatched += result.autoMatch?.autoMatched ?? 0;
+      suggested += result.autoMatch?.suggested ?? 0;
+      noCandidate += result.autoMatch?.noCandidate ?? 0;
     } else {
       failed += 1;
     }
@@ -142,7 +150,9 @@ export async function processQueuedRecognitionJobs(
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
   revalidatePath(`/app/monitoring/${sessionId}/review`);
-  return { message: `Обработано фото: успешно ${processed}, ошибок ${failed}, пропущено ${skipped}. Лимит запуска: ${ocrLimit}.` };
+  return {
+    message: `Обработано фото: успешно ${processed}, ошибок ${failed}, пропущено ${skipped}. Auto-match: сопоставлено ${autoMatched}, предложено ${suggested}, без кандидата ${noCandidate}. Лимит запуска: ${ocrLimit}.`,
+  };
 }
 
 async function processOneRecognitionJob({
@@ -150,11 +160,13 @@ async function processOneRecognitionJob({
   sessionId,
   job,
   supabase,
+  userId,
 }: {
   companyId: string;
   sessionId: string;
   job: QueueJobRow;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  userId: string;
 }): Promise<RecognitionJobResult> {
   const photoId = job.payload.photo_id;
 
@@ -221,13 +233,26 @@ async function processOneRecognitionJob({
     const image = await loadPhotoAsBase64(supabase, photo.storage_path);
     const recognition = await recognizeShelfPhoto(image);
     const rows = buildRecognizedItemRows({ companyId, sessionId, photoId, items: recognition.items });
+    let autoMatch: AutoMatchStats | undefined;
 
     if (rows.length > 0) {
-      const { error: insertError } = await supabase.from("recognized_items").insert(rows);
+      const { data: insertedItems, error: insertError } = await supabase
+        .from("recognized_items")
+        .insert(rows)
+        .select("id, raw_name, brand, size_text, price_tag_text, product_visible_text")
+        .returns<AutoMatchRecognizedItem[]>();
 
       if (insertError) {
         throw new Error(insertError.message);
       }
+
+      autoMatch = await autoMatchRecognizedItems({
+        companyId,
+        createdBy: userId,
+        items: insertedItems ?? [],
+        sessionId,
+        supabase,
+      });
     }
 
     const { error: photoProcessedError } = await supabase
@@ -246,7 +271,7 @@ async function processOneRecognitionJob({
       .from("jobs")
       .update({
         status: "succeeded",
-        error: null,
+        error: autoMatch?.errors.length ? `OCR OK, auto-match warnings: ${autoMatch.errors.join("; ").slice(0, 500)}` : null,
         model: recognition.usage.model,
         input_tokens: recognition.usage.input_tokens,
         output_tokens: recognition.usage.output_tokens,
@@ -260,7 +285,7 @@ async function processOneRecognitionJob({
       throw new Error(jobDoneError.message);
     }
 
-    return { ok: true };
+    return { ok: true, autoMatch };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Recognition failed.";
     await markJobFailed(supabase, companyId, job.id, message);
