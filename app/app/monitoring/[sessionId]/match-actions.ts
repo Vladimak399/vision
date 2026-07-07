@@ -4,26 +4,16 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createSupabaseServerClient } from "../../../../lib/supabase/server";
+import { autoMatchRecognizedItems, type AutoMatchRecognizedItem } from "../../../../server/auto-catalog-matching";
 import { getCurrentUser } from "../../../../server/auth";
-import { getCatalogMatchCandidates, type CatalogMatchProduct } from "../../../../server/catalog-matching";
+import { saveMatchAliasForRecognizedItem } from "../../../../server/match-aliases";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 
 export type MatchActionState = { error?: string; message?: string };
 
-type RecognizedItemRow = {
-  id: string;
-  raw_name: string | null;
-  brand: string | null;
-  size_text: string | null;
-  price_tag_text: string | null;
-  product_visible_text: string | null;
-};
-
-type MatchRow = { id: string; recognized_item_id: string };
+type MatchRow = { id: string; recognized_item_id: string; catalog_product_id: string };
 
 const MATCH_ROLES = new Set(["admin", "manager", "reviewer"]);
-const AUTO_MATCH_MIN_SCORE = 0.68;
-const CONFIDENT_MATCH_MIN_SCORE = 0.84;
 
 export async function suggestCatalogMatchesForSession(_state: MatchActionState, formData: FormData): Promise<MatchActionState> {
   const auth = await getMatchAuth(formData);
@@ -40,78 +30,16 @@ export async function suggestCatalogMatchesForSession(_state: MatchActionState, 
   if (department === "none") itemsQuery = itemsQuery.is("department", null);
   else if (department) itemsQuery = itemsQuery.eq("department", department);
 
-  const { data: items, error: itemsError } = await itemsQuery.limit(100).returns<RecognizedItemRow[]>();
+  const { data: items, error: itemsError } = await itemsQuery.limit(250).returns<AutoMatchRecognizedItem[]>();
   if (itemsError) return { error: `Не удалось загрузить товары: ${itemsError.message}` };
   if (!items?.length) return { message: "Нет товаров для автоподбора." };
 
-  const itemIds = items.map((item) => item.id);
-  const { error: oldMatchesError } = await supabase
-    .from("matches")
-    .update({ is_active: false })
-    .eq("company_id", companyId)
-    .in("recognized_item_id", itemIds)
-    .eq("decision", "auto")
-    .eq("is_active", true);
-  if (oldMatchesError) return { error: `Не удалось обновить auto-match: ${oldMatchesError.message}` };
-
-  const { data: products, error: productsError } = await supabase
-    .from("catalog_products")
-    .select("id, name, brand, size_text, is_active")
-    .eq("company_id", companyId)
-    .eq("is_active", true)
-    .limit(5000)
-    .returns<CatalogMatchProduct[]>();
-  if (productsError) return { error: `Не удалось загрузить каталог: ${productsError.message}` };
-  if (!products?.length) return { message: "В каталоге нет активных товаров." };
-
-  let suggested = 0;
-  let strong = 0;
-  let weak = 0;
-
-  for (const item of items) {
-    const best = getCatalogMatchCandidates(
-      {
-        rawName: item.raw_name,
-        brand: item.brand,
-        sizeText: item.size_text,
-        priceTagText: item.price_tag_text,
-        productVisibleText: item.product_visible_text,
-      },
-      products,
-      { limit: 1 },
-    )[0];
-
-    if (!best || best.score < AUTO_MATCH_MIN_SCORE) {
-      weak += 1;
-      continue;
-    }
-
-    const { error: matchError } = await supabase.from("matches").insert({
-      company_id: companyId,
-      recognized_item_id: item.id,
-      catalog_product_id: best.product.id,
-      score: best.score,
-      decision: "auto",
-      is_active: true,
-      created_by: userId,
-    });
-    if (matchError) return { error: `Не удалось сохранить match: ${matchError.message}` };
-
-    suggested += 1;
-    if (best.score >= CONFIDENT_MATCH_MIN_SCORE) {
-      strong += 1;
-      const { error: updateItemError } = await supabase
-        .from("recognized_items")
-        .update({ status: "matched" })
-        .eq("company_id", companyId)
-        .eq("session_id", sessionId)
-        .eq("id", item.id);
-      if (updateItemError) return { error: `Статус товара не обновился: ${updateItemError.message}` };
-    }
-  }
+  const stats = await autoMatchRecognizedItems({ companyId, createdBy: userId, items, sessionId, supabase });
 
   revalidateReview(sessionId);
-  return { message: `Подбор завершён: кандидатов ${suggested}, сильных ${strong}, без уверенного совпадения ${weak}.` };
+  return {
+    message: `Подбор завершён: сопоставлено автоматически ${stats.autoMatched}, предложено кандидатов ${stats.suggested}, без кандидата ${stats.noCandidate}. Ошибок ${stats.errors.length}.`,
+  };
 }
 
 export async function updateCatalogMatchDecision(formData: FormData): Promise<void> {
@@ -126,7 +54,7 @@ export async function updateCatalogMatchDecision(formData: FormData): Promise<vo
 
   const { data: match, error: matchError } = await supabase
     .from("matches")
-    .select("id, recognized_item_id")
+    .select("id, recognized_item_id, catalog_product_id")
     .eq("company_id", companyId)
     .eq("id", matchId)
     .eq("is_active", true)
@@ -159,6 +87,13 @@ export async function updateCatalogMatchDecision(formData: FormData): Promise<vo
       .eq("session_id", sessionId)
       .eq("id", match.recognized_item_id);
     if (updateItemError) throw new Error(`Статус товара не обновился: ${updateItemError.message}`);
+
+    await saveMatchAliasForRecognizedItem({
+      catalogProductId: match.catalog_product_id,
+      companyId,
+      recognizedItemId: match.recognized_item_id,
+      supabase,
+    });
   } else {
     const { error: rejectError } = await supabase
       .from("matches")
