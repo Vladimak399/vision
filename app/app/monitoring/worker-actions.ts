@@ -271,7 +271,7 @@ async function processOneRecognitionJob({
       .from("jobs")
       .update({
         status: "succeeded",
-        error: autoMatch?.errors.length ? `OCR OK, auto-match warnings: ${autoMatch.errors.join("; ").slice(0, 500)}` : null,
+        error: null,
         model: recognition.usage.model,
         input_tokens: recognition.usage.input_tokens,
         output_tokens: recognition.usage.output_tokens,

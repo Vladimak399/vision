@@ -10,6 +10,7 @@ import { updateCatalogMatchDecision } from "../match-actions";
 import { RecognizedItemReviewControls } from "../recognized-item-review-controls";
 
 type ReviewDepartmentFilter = "all" | "products" | "chemistry" | "none";
+type ReviewCandidateFilter = "all" | "with_candidate" | "without_candidate";
 
 type ReviewPageProps = {
   params: Promise<{
@@ -17,6 +18,7 @@ type ReviewPageProps = {
   }>;
   searchParams?: Promise<{
     department?: string;
+    candidates?: string;
   }>;
 };
 
@@ -91,6 +93,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
   const { sessionId } = await params;
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const departmentFilter = parseDepartmentFilter(resolvedSearchParams.department);
+  const candidateFilter = parseCandidateFilter(resolvedSearchParams.candidates);
   const user = await getCurrentUser();
 
   if (!user) {
@@ -159,6 +162,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
     .returns<ReviewCatalogProduct[]>();
 
   const suggestionsByItemId = buildSuggestionsByItemId(items ?? [], catalogProducts ?? []);
+  const visibleItems = filterItemsByCandidates(items ?? [], suggestionsByItemId, candidateFilter);
   const counts = getStatusCounts(items ?? []);
   const needsReviewCount = (counts.recognized ?? 0) + (counts.needs_review ?? 0);
   const readyCount = (counts.matched ?? 0) + (counts.confirmed ?? 0) + (counts.unmatched ?? 0);
@@ -187,6 +191,27 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
             </Link>
           ))}
         </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+          {[
+            { key: "all", label: "Все candidates" },
+            { key: "with_candidate", label: "С кандидатом" },
+            { key: "without_candidate", label: "Без кандидата" },
+          ].map((filter) => (
+            <Link
+              key={filter.key}
+              href={getCandidateHref(sessionId, departmentFilter, filter.key as ReviewCandidateFilter)}
+              style={{
+                border: "1px solid #d1d5db",
+                borderRadius: 999,
+                padding: "0.25rem 0.5rem",
+                fontWeight: filter.key === candidateFilter ? 700 : 400,
+              }}
+            >
+              {filter.label}
+            </Link>
+          ))}
+        </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
           {Object.entries(counts).map(([status, count]) => (
             <span key={status} style={{ border: "1px solid #d1d5db", borderRadius: 999, padding: "0.25rem 0.5rem" }}>
@@ -206,9 +231,9 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
 
       <MatchControls sessionId={sessionId} department={departmentFilter} />
 
-      {items && items.length > 0 ? (
+      {visibleItems.length > 0 ? (
         <div style={{ display: "grid", gap: "0.75rem" }}>
-          {items.map((item) => {
+          {visibleItems.map((item) => {
             const activeMatch = getActiveMatch(item.matches);
             const suggestions = suggestionsByItemId.get(item.id) ?? [];
 
@@ -338,6 +363,28 @@ function getStatusCounts(items: ReviewItem[]) {
 
 function parseDepartmentFilter(value: string | undefined): ReviewDepartmentFilter {
   return value === "products" || value === "chemistry" || value === "none" ? value : "all";
+}
+
+function parseCandidateFilter(value: string | undefined): ReviewCandidateFilter {
+  return value === "with_candidate" || value === "without_candidate" ? value : "all";
+}
+
+function filterItemsByCandidates(items: ReviewItem[], suggestionsByItemId: Map<string, ReviewCatalogSuggestion[]>, filter: ReviewCandidateFilter) {
+  if (filter === "all") return items;
+  return items.filter((item) => {
+    const hasActiveMatch = Boolean(getActiveMatch(item.matches));
+    const hasSuggestions = (suggestionsByItemId.get(item.id)?.length ?? 0) > 0;
+    const hasCandidate = hasActiveMatch || hasSuggestions;
+    return filter === "with_candidate" ? hasCandidate : !hasCandidate;
+  });
+}
+
+function getCandidateHref(sessionId: string, department: ReviewDepartmentFilter, candidates: ReviewCandidateFilter) {
+  const params = new URLSearchParams();
+  if (department !== "all") params.set("department", department);
+  if (candidates !== "all") params.set("candidates", candidates);
+  const query = params.toString();
+  return `/app/monitoring/${sessionId}/review${query ? `?${query}` : ""}`;
 }
 
 function getDepartmentHref(sessionId: string, department: ReviewDepartmentFilter) {

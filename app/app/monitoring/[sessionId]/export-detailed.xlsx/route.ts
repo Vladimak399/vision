@@ -82,6 +82,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   if (itemsError) return NextResponse.json({ error: itemsError.message }, { status: 500 });
 
   const rows = (items ?? []).map((item) => buildExportRow(item));
+  const summary = buildExportSummary(items ?? []);
   const workbook = XLSX.utils.book_new();
   const summarySheet = XLSX.utils.aoa_to_sheet([
     ["Параметр", "Значение"],
@@ -94,9 +95,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["Строк в экспорте", String(rows.length)],
     ["Продукты", String(rows.filter((row) => row["Отдел"] === "Продукты").length)],
     ["Химия", String(rows.filter((row) => row["Отдел"] === "Химия").length)],
-    ["Сопоставлено", String(rows.filter((row) => row["Каталог товар"]).length)],
-    ["Не найдено в ассортименте", String(notFoundRows(rows).length)],
-    ["На проверку", String(reviewRows(rows).length)],
+    ["Matched", String(summary.matched)],
+    ["Unmatched / Нет в ассортименте", String(summary.unmatched)],
+    ["Needs review", String(summary.needsReview)],
+    ["Needs review без кандидата", String(summary.needsReviewWithoutCandidate)],
+    ["Needs review с кандидатом", String(summary.needsReviewWithCandidate)],
+    ["Большая разница цены", String(summary.largePriceDiff)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
   ]);
 
@@ -120,10 +124,42 @@ export async function GET(_request: Request, { params }: RouteContext) {
   });
 }
 
+function buildExportSummary(items: ExportItem[]) {
+  return items.reduce(
+    (summary, item) => {
+      const activeMatch = getActiveMatch(item.matches);
+      const product = activeMatch?.catalog_products ?? null;
+      const competitorPrice = getEffectiveCompetitorPrice(item);
+      const ownPrice = product?.own_price_minor ?? null;
+      const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? (competitorPrice - ownPrice) / ownPrice : null;
+
+      if (item.status === "matched" || item.status === "confirmed") summary.matched += 1;
+      if (item.status === "unmatched") summary.unmatched += 1;
+      if (item.status === "needs_review") {
+        summary.needsReview += 1;
+        if (activeMatch) summary.needsReviewWithCandidate += 1;
+        else summary.needsReviewWithoutCandidate += 1;
+      }
+      if (diffPercent !== null && Math.abs(diffPercent) >= 0.05) summary.largePriceDiff += 1;
+
+      return summary;
+    },
+    { matched: 0, unmatched: 0, needsReview: 0, needsReviewWithoutCandidate: 0, needsReviewWithCandidate: 0, largePriceDiff: 0 },
+  );
+}
+
+function getActiveMatch(matches: ExportMatch[] | null) {
+  return matches?.find((match) => match.is_active) ?? null;
+}
+
+function getEffectiveCompetitorPrice(item: ExportItem) {
+  return item.promo_price_minor ?? item.price_minor;
+}
+
 function buildExportRow(item: ExportItem) {
-  const activeMatch = item.matches?.find((match) => match.is_active) ?? null;
+  const activeMatch = getActiveMatch(item.matches);
   const product = activeMatch?.catalog_products ?? null;
-  const competitorPrice = item.promo_price_minor ?? item.price_minor;
+  const competitorPrice = getEffectiveCompetitorPrice(item);
   const ownPrice = product?.own_price_minor ?? null;
   const diffMinor = competitorPrice !== null && ownPrice !== null ? competitorPrice - ownPrice : null;
   const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? diffMinor! / ownPrice : null;

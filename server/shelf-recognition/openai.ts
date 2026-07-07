@@ -1,33 +1,12 @@
 import { getServerEnv } from "../../lib/env";
 import { getAiRuntimeConfig } from "../ai-config";
 import { estimateOcrCostMicrousd } from "../ocr-cost";
+import { SHELF_RECOGNITION_PROMPT } from "./prompt";
 import type { ShelfRecognitionInput, ShelfRecognitionPayload, ShelfRecognitionResult } from "./types";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
-const SHELF_RECOGNITION_PROMPT = `
-You analyze retail shelf photos for competitor price monitoring.
 
-Extract visible product-price candidates from the whole shelf image.
-
-Important rules:
-1. Price must come from a visible shelf price tag only. Never guess a price from packaging.
-2. Product name may use shelf price tag text and visible package text nearby.
-3. Package text is only supporting evidence for brand, product name, flavor/type, and size.
-4. Link a price tag to a product only when their visual relationship is plausible.
-5. If several products or price tags are close together and the link is unclear, set needs_review=true.
-6. Never invent missing product names, prices, sizes, promotions, or brands.
-7. Do not match items to any internal catalog.
-8. Return prices in minor RUB units. Example: 399.99 RUB -> 39999.
-9. If the photo is too blurry or the text is unreadable, return an empty items array and explain in warnings.
-10. Analyze the full photo: top shelves, bottom shelves, edges, and partially visible products.
-
-Confidence fields:
-- confidence: how confident you are in extracted text and price.
-- link_confidence: how confident you are that the price tag belongs to the visible product nearby.
-
-Return only JSON matching the schema.
-`.trim();
 
 const shelfRecognitionSchema = {
   type: "object",
