@@ -82,7 +82,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   if (itemsError) return NextResponse.json({ error: itemsError.message }, { status: 500 });
 
   const rows = (items ?? []).map((item) => buildExportRow(item));
-  const summary = buildExportSummary(items ?? []);
+  const summary = buildExportSummary(rows);
   const workbook = XLSX.utils.book_new();
   const summarySheet = XLSX.utils.aoa_to_sheet([
     ["Параметр", "Значение"],
@@ -100,17 +100,28 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["Needs review", String(summary.needsReview)],
     ["Needs review без кандидата", String(summary.needsReviewWithoutCandidate)],
     ["Needs review с кандидатом", String(summary.needsReviewWithCandidate)],
-    ["Большая разница цены", String(summary.largePriceDiff)],
+    ["AI candidates", String(summary.aiCandidates)],
+    ["Сравнимых цен", String(summary.comparablePrices)],
+    ["Конкурент дешевле", String(summary.competitorCheaper)],
+    ["Мы дешевле", String(summary.ownCheaper)],
+    ["Большая разница цены 5%+", String(summary.largePriceDiff)],
+    ["Нет нашей цены", String(summary.missingOwnPrice)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
   ]);
 
-  summarySheet["!cols"] = [{ wch: 28 }, { wch: 48 }];
+  summarySheet["!cols"] = [{ wch: 30 }, { wch: 52 }];
   XLSX.utils.book_append_sheet(workbook, summarySheet, "Сводка");
-  appendRowsSheet(workbook, "Товары", rows, "Нет товаров для экспорта");
+  appendRowsSheet(workbook, "Все строки", rows, "Нет товаров для экспорта");
+  appendRowsSheet(workbook, "Сравнение цен", comparisonRows(rows), "Нет строк для сравнения цен");
+  appendRowsSheet(workbook, "Конкурент дешевле", competitorCheaperRows(rows), "Нет строк, где конкурент дешевле");
+  appendRowsSheet(workbook, "Мы дешевле", ownCheaperRows(rows), "Нет строк, где мы дешевле");
+  appendRowsSheet(workbook, "На проверку", reviewRows(rows), "Нет товаров, требующих проверки");
+  appendRowsSheet(workbook, "AI candidates", aiCandidateRows(rows), "Нет AI-кандидатов");
+  appendRowsSheet(workbook, "Без кандидата", withoutCandidateRows(rows), "Нет строк без кандидата");
+  appendRowsSheet(workbook, "Нет нашей цены", missingOwnPriceRows(rows), "Нет строк без нашей цены");
+  appendRowsSheet(workbook, "Не найдено", notFoundRows(rows), "Нет товаров с пометкой не найдено");
   appendRowsSheet(workbook, "Продукты", rows.filter((row) => row["Отдел"] === "Продукты"), "Нет товаров по продуктам");
   appendRowsSheet(workbook, "Химия", rows.filter((row) => row["Отдел"] === "Химия"), "Нет товаров по химии");
-  appendRowsSheet(workbook, "Не найдено", notFoundRows(rows), "Нет товаров с пометкой не найдено");
-  appendRowsSheet(workbook, "На проверку", reviewRows(rows), "Нет товаров, требующих проверки");
 
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
   const filename = buildFilename(session.stores?.name ?? "monitoring", session.id);
@@ -124,27 +135,31 @@ export async function GET(_request: Request, { params }: RouteContext) {
   });
 }
 
-function buildExportSummary(items: ExportItem[]) {
-  return items.reduce(
-    (summary, item) => {
-      const activeMatch = getActiveMatch(item.matches);
-      const product = activeMatch?.catalog_products ?? null;
-      const competitorPrice = getEffectiveCompetitorPrice(item);
-      const ownPrice = product?.own_price_minor ?? null;
-      const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? (competitorPrice - ownPrice) / ownPrice : null;
+function buildExportSummary(rows: ExportRow[]) {
+  return rows.reduce(
+    (summary, row) => {
+      const hasCandidate = Boolean(row["Каталог товар"]);
+      const comparable = hasCandidate && row["Наша цена"] !== "" && row["Цена конкурента итоговая"] !== "";
+      const diff = typeof row["Разница конкурент-наша"] === "number" ? row["Разница конкурент-наша"] : null;
+      const diffPercent = parsePercent(row["Разница %"]);
 
-      if (item.status === "matched" || item.status === "confirmed") summary.matched += 1;
-      if (item.status === "unmatched") summary.unmatched += 1;
-      if (item.status === "needs_review") {
+      if (row["Статус проверки"] === "matched" || row["Статус проверки"] === "confirmed") summary.matched += 1;
+      if (row["Статус проверки"] === "unmatched") summary.unmatched += 1;
+      if (row["Статус проверки"] === "needs_review") {
         summary.needsReview += 1;
-        if (activeMatch) summary.needsReviewWithCandidate += 1;
+        if (hasCandidate) summary.needsReviewWithCandidate += 1;
         else summary.needsReviewWithoutCandidate += 1;
       }
+      if (row["Match decision"] === "ai_review") summary.aiCandidates += 1;
+      if (comparable) summary.comparablePrices += 1;
+      if (comparable && diff !== null && diff < 0) summary.competitorCheaper += 1;
+      if (comparable && diff !== null && diff > 0) summary.ownCheaper += 1;
       if (diffPercent !== null && Math.abs(diffPercent) >= 0.05) summary.largePriceDiff += 1;
+      if (hasCandidate && row["Наша цена"] === "") summary.missingOwnPrice += 1;
 
       return summary;
     },
-    { matched: 0, unmatched: 0, needsReview: 0, needsReviewWithoutCandidate: 0, needsReviewWithCandidate: 0, largePriceDiff: 0 },
+    { matched: 0, unmatched: 0, needsReview: 0, needsReviewWithoutCandidate: 0, needsReviewWithCandidate: 0, aiCandidates: 0, comparablePrices: 0, competitorCheaper: 0, ownCheaper: 0, largePriceDiff: 0, missingOwnPrice: 0 },
   );
 }
 
@@ -164,14 +179,14 @@ function buildExportRow(item: ExportItem) {
   const diffMinor = competitorPrice !== null && ownPrice !== null ? competitorPrice - ownPrice : null;
   const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? diffMinor! / ownPrice : null;
   const notFound = item.status === "unmatched";
-  const needsAttention = notFound || item.status === "needs_review" || !product || (diffPercent !== null && Math.abs(diffPercent) >= 0.05);
+  const needsAttention = notFound || item.status === "needs_review" || !product || (diffPercent !== null && Math.abs(diffPercent) >= 0.05) || Boolean(product && ownPrice === null);
 
   return {
     "Отдел": item.department === "products" ? "Продукты" : item.department === "chemistry" ? "Химия" : "Без отдела",
     "Статус проверки": item.status,
     "Нужно внимание": needsAttention ? "Да" : "Нет",
     "Не найдено в ассортименте": notFound ? "Да" : "Нет",
-    "Комментарий": buildComment(item, Boolean(product), notFound, diffPercent),
+    "Комментарий": buildComment(item, Boolean(product), notFound, diffPercent, ownPrice),
     "Каталог SKU": product?.external_sku ?? "",
     "Каталог товар": product?.name ?? "",
     "Каталог бренд": product?.brand ?? "",
@@ -203,7 +218,32 @@ function buildExportRow(item: ExportItem) {
 function appendRowsSheet(workbook: XLSX.WorkBook, name: string, rows: ExportRow[], emptyMessage: string) {
   const sheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": emptyMessage }]);
   sheet["!cols"] = ROW_WIDTHS.map((wch) => ({ wch }));
+  sheet["!autofilter"] = rows.length > 0 ? { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: ROW_WIDTHS.length - 1 } }) } : undefined;
   XLSX.utils.book_append_sheet(workbook, sheet, name);
+}
+
+function comparisonRows(rows: ExportRow[]) {
+  return rows.filter((row) => Boolean(row["Каталог товар"]) && row["Наша цена"] !== "" && row["Цена конкурента итоговая"] !== "");
+}
+
+function competitorCheaperRows(rows: ExportRow[]) {
+  return comparisonRows(rows).filter((row) => typeof row["Разница конкурент-наша"] === "number" && row["Разница конкурент-наша"] < 0);
+}
+
+function ownCheaperRows(rows: ExportRow[]) {
+  return comparisonRows(rows).filter((row) => typeof row["Разница конкурент-наша"] === "number" && row["Разница конкурент-наша"] > 0);
+}
+
+function aiCandidateRows(rows: ExportRow[]) {
+  return rows.filter((row) => row["Match decision"] === "ai_review");
+}
+
+function withoutCandidateRows(rows: ExportRow[]) {
+  return rows.filter((row) => row["Статус проверки"] === "needs_review" && !row["Каталог товар"]);
+}
+
+function missingOwnPriceRows(rows: ExportRow[]) {
+  return rows.filter((row) => Boolean(row["Каталог товар"]) && row["Наша цена"] === "");
 }
 
 function notFoundRows(rows: ExportRow[]) {
@@ -214,9 +254,10 @@ function reviewRows(rows: ExportRow[]) {
   return rows.filter((row) => row["Нужно внимание"] === "Да" || row["Статус проверки"] === "needs_review");
 }
 
-function buildComment(item: ExportItem, productFound: boolean, notFound: boolean, diffPercent: number | null) {
+function buildComment(item: ExportItem, productFound: boolean, notFound: boolean, diffPercent: number | null, ownPrice: number | null) {
   if (notFound) return "Подтверждено: не продаём / нет в ассортименте";
   if (!productFound) return item.review_reason || "Нет уверенного совпадения с каталогом, проверить вручную";
+  if (ownPrice === null) return "Есть кандидат из каталога, но нет нашей цены";
   if (item.status === "needs_review") return item.review_reason || "Нужно проверить вручную";
   if (diffPercent !== null && diffPercent <= -0.05) return "Конкурент дешевле нашей цены на 5%+";
   if (diffPercent !== null && diffPercent >= 0.05) return "Конкурент дороже нашей цены на 5%+";
@@ -229,6 +270,13 @@ function money(value: number | null) {
 
 function percent(value: number | null) {
   return value === null || !Number.isFinite(value) ? "" : `${Math.round(value * 1000) / 10}%`;
+}
+
+function parsePercent(value: string | number) {
+  if (typeof value === "number") return value;
+  if (!value) return null;
+  const parsed = Number(String(value).replace("%", "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed / 100 : null;
 }
 
 function formatDateTime(value: string) {
