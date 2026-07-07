@@ -78,9 +78,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
   const supabase = await createSupabaseServerClient();
   const { data: session, error } = await supabase
     .from("monitoring_sessions")
-    .select(
-      "id, status, created_at, started_at, completed_at, stores(name, address)",
-    )
+    .select("id, status, created_at, started_at, completed_at, stores(name, address)")
     .eq("company_id", companyId)
     .eq("id", sessionId)
     .maybeSingle()
@@ -245,16 +243,7 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
         )}
       </section>
 
-      <section className="card soft">
-        <h2 style={{ marginTop: 0 }}>Выгрузка</h2>
-        <p style={{ color: "#4b5563" }}>
-          Excel можно выгрузить после проверки спорных строк. Если выгрузить
-          раньше, непроверенные позиции останутся в рабочем статусе.
-        </p>
-        <Link className="btn" href={`/app/monitoring/${session.id}/export.xlsx`}>
-          Выгрузить Excel
-        </Link>
-      </section>
+      <ExportSection sessionId={session.id} reviewCount={reviewCount} recognizedCount={recognizedCount} />
 
       {canUseTechnicalTools ? (
         <details className="card">
@@ -280,7 +269,6 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
             </dl>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
               <Link href={`/app/monitoring/${session.id}/review`}>Review</Link>
-              <Link href={`/app/monitoring/${session.id}/export-detailed.xlsx`}>Detailed export</Link>
               <Link href="/app/ai-diagnostics">AI-диагностика</Link>
             </div>
           </div>
@@ -314,7 +302,7 @@ function NextAction({
   }
 
   if (processingPhotoCount > 0) {
-    return <a className="btn" href="">Обновить статус</a>;
+    return <Link className="btn" href={`/app/monitoring/${sessionId}`}>Обновить статус</Link>;
   }
 
   if (reviewCount > 0) {
@@ -370,6 +358,25 @@ function SessionStage({
   }
 
   return <p style={{ color: "#4b5563" }}>Фото обработаны, но товары пока не найдены.</p>;
+}
+
+function ExportSection({ sessionId, reviewCount, recognizedCount }: { sessionId: string; reviewCount: number; recognizedCount: number }) {
+  const message =
+    recognizedCount === 0
+      ? "После распознавания здесь будет доступна выгрузка Excel."
+      : reviewCount > 0
+        ? `Осталось проверить ${reviewCount} товаров. Excel можно выгрузить сейчас, но лучше сначала завершить проверку.`
+        : "Все товары проверены. Можно выгружать Excel.";
+
+  return (
+    <section className="card soft">
+      <h2 style={{ marginTop: 0 }}>Выгрузка</h2>
+      <p style={{ color: "#4b5563" }}>{message}</p>
+      <Link className="btn" href={`/app/monitoring/${sessionId}/export.xlsx`}>
+        Выгрузить Excel
+      </Link>
+    </section>
+  );
 }
 
 function StatCard({ label, value, badgeClass }: { label: string; value: number; badgeClass: string }) {
