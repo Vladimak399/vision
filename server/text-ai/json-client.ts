@@ -37,9 +37,6 @@ type ChatCompletionsResponse = {
 };
 
 const DEFAULT_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-const FALLBACK_STATUSES = new Set([429, 503]);
-const MAX_ATTEMPTS = 3;
 
 export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Promise<TextAiJsonResult<T>> {
   const aiConfig = getAiRuntimeConfig();
@@ -59,8 +56,7 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
       return await runTextAiJsonWithModel<T>({ provider: aiConfig.text.provider, model, system, user });
     } catch (error) {
       lastError = error;
-      const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : null;
-      if (index === 0 && FALLBACK_STATUSES.has(status ?? 0) && models.length > 1) continue;
+      if (index === 0 && isAiFallbackCandidate(error) && models.length > 1) continue;
       throw error;
     }
   }
@@ -80,35 +76,14 @@ async function runTextAiJsonWithModel<T>({ provider, model, system, user }: { pr
     throw new Error("AI-провайдер отключен или не поддерживается. Проверьте AI_VISION_PROVIDER и AI_TEXT_PROVIDER.");
   }
 
-  try {
-    return await runTextModel<T>({
-      apiKey,
-      baseUrl,
-      model: aiConfig.text.model,
-      provider: aiConfig.text.provider,
-      system,
-      user,
-    });
-  } catch (error) {
-    if (
-      aiConfig.text.provider === "gemini" &&
-      aiConfig.fallback.provider === "gemini" &&
-      aiConfig.fallback.model &&
-      aiConfig.fallback.model !== aiConfig.text.model &&
-      isAiFallbackCandidate(error)
-    ) {
-      return runTextModel<T>({
-        apiKey,
-        baseUrl,
-        model: aiConfig.fallback.model,
-        provider: aiConfig.text.provider,
-        system,
-        user,
-      });
-    }
-
-    throw error;
-  }
+  return runTextModel<T>({
+    apiKey,
+    baseUrl,
+    model,
+    provider,
+    system,
+    user,
+  });
 }
 
 async function runTextModel<T>({
@@ -167,17 +142,6 @@ async function runTextModel<T>({
       output_tokens: body?.usage?.completion_tokens ?? 0,
     },
   };
-}
-
-function toTextAiHttpError(status: number, message: string | undefined) {
-  const safeMessage = status === 429 ? "Превышен лимит Gemini API. Подождите и повторите запрос." : status === 503 ? "Gemini временно перегружен. Повторите позже или переключите модель в Vercel." : message || `Text AI request failed with status ${status}.`;
-  const error = new Error(safeMessage) as Error & { status?: number };
-  error.status = status;
-  return error;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getProviderApiKey(provider: string) {
