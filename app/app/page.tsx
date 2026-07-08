@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import {
   BarChart3,
   Building2,
@@ -14,7 +15,8 @@ import {
   type CompanyMembership,
   getCurrentUserCompanyMemberships,
 } from "../../server/memberships";
-import { logout } from "./actions";
+import { ACTIVE_COMPANY_COOKIE, resolveActiveCompanyMembership } from "../../server/active-company";
+import { logout, setActiveCompany } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +51,10 @@ export default async function AppPage() {
         : "Не удалось получить доступы к компаниям.";
   }
 
-  const currentMembership = memberships[0];
+  const cookieStore = await cookies();
+  const activeCompanyId = cookieStore.get(ACTIVE_COMPANY_COOKIE)?.value ?? null;
+  const currentMembership =
+    resolveActiveCompanyMembership(activeCompanyId, memberships) ?? memberships[0];
   const hasMultipleCompanies = memberships.length > 1;
   const canManageWorkspace = currentMembership
     ? ["admin", "manager"].includes(currentMembership.role)
@@ -154,10 +159,29 @@ export default async function AppPage() {
               </span>
             </div>
             {hasMultipleCompanies ? (
-              <p className="alert alert-warn" style={{ marginTop: "1rem" }}>
-                У пользователя несколько компаний. Сейчас используется первая
-                компания из списка доступов.
-              </p>
+              <div className="alert alert-warn" style={{ marginTop: "1rem" }}>
+                <p style={{ marginBottom: "0.5rem" }}>
+                  У вас несколько компаний. Выберите активную — она будет
+                  использоваться во всех разделах (каталог, мониторинг, магазины).
+                </p>
+                <form action={setActiveCompany} style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <select
+                    name="companyId"
+                    defaultValue={currentMembership.companyId}
+                    className="company-select"
+                    aria-label="Активная компания"
+                  >
+                    {memberships.map((membership) => (
+                      <option key={membership.companyId} value={membership.companyId}>
+                        {membership.companyName} — {getRoleLabel(membership.role)}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="secondary" type="submit">
+                    Переключить
+                  </button>
+                </form>
+              </div>
             ) : null}
           </section>
         ) : (
