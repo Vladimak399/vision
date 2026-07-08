@@ -1,19 +1,15 @@
 import { getAiRuntimeConfig } from "../ai-config";
+import { AiHttpError, isAiFallbackCandidate, withAiRetry } from "../ai-retry";
 import { SHELF_RECOGNITION_PROMPT } from "./prompt";
 import type { ShelfRecognitionInput, ShelfRecognitionItem, ShelfRecognitionPayload, ShelfRecognitionResult } from "./types";
 
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-const FALLBACK_STATUSES = new Set([429, 503]);
-const MAX_ATTEMPTS = 3;
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
   error?: { message?: string };
 };
-
-type GeminiHttpError = Error & { status?: number };
 
 type LooseRecognitionItem = Partial<ShelfRecognitionItem> & {
   name?: unknown;
@@ -58,8 +54,7 @@ export async function recognizeShelfPhotoWithGemini(input: ShelfRecognitionInput
       return await runGeminiVisionRequest({ apiKey, input, model });
     } catch (error) {
       lastError = error;
-      const status = getErrorStatus(error);
-      if (index === 0 && FALLBACK_STATUSES.has(status ?? 0) && models.length > 1) continue;
+      if (index === 0 && isAiFallbackCandidate(error) && models.length > 1) continue;
       break;
     }
   }
@@ -71,20 +66,28 @@ async function runGeminiVisionRequest({ apiKey, input, model }: { apiKey: string
   const startedAt = Date.now();
   const endpoint = `${GEMINI_API_BASE_URL}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const imagePart = getInputImagePart(input);
-  const body = JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: SHELF_RECOGNITION_PROMPT }, imagePart] }],
-    generationConfig: { response_mime_type: "application/json", temperature: 0 },
-  });
 
-  let responseBody: GeminiGenerateContentResponse | null = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body });
-    responseBody = (await response.json().catch(() => null)) as GeminiGenerateContentResponse | null;
-    if (response.ok) break;
-    const error = toGeminiHttpError(response.status, responseBody?.error?.message);
-    if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_ATTEMPTS) throw error;
-    await sleep(250 * 2 ** (attempt - 1));
-  }
+  const responseBody = await withAiRetry(async () => {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: SHELF_RECOGNITION_PROMPT }, imagePart] }],
+        generationConfig: { response_mime_type: "application/json", temperature: 0 },
+      }),
+    });
+
+    const parsed = (await response.json().catch(() => null)) as GeminiGenerateContentResponse | null;
+
+    if (!response.ok) {
+      throw new AiHttpError(
+        toGeminiErrorMessage(response.status, parsed?.error?.message),
+        response.status,
+      );
+    }
+
+    return parsed;
+  });
 
   const outputText = extractOutputText(responseBody);
   if (!outputText) throw new Error("Gemini OCR response did not contain output text.");
@@ -101,15 +104,11 @@ async function runGeminiVisionRequest({ apiKey, input, model }: { apiKey: string
   };
 }
 
-function toGeminiHttpError(status: number, message: string | undefined): GeminiHttpError {
-  const safeMessage = status === 429 ? "Превышен лимит Gemini API. Подождите и повторите запрос." : status === 503 ? "Gemini временно перегружен. Повторите позже или переключите модель в Vercel." : message || `Gemini OCR request failed with status ${status}.`;
-  const error = new Error(safeMessage) as GeminiHttpError;
-  error.status = status;
-  return error;
+function toGeminiErrorMessage(status: number, message: string | undefined) {
+  if (status === 429) return "Превышен лимит Gemini API. Подождите и повторите запрос.";
+  if (status === 503) return "Gemini временно перегружен. Повторите позже или переключите модель в Vercel.";
+  return message || `Gemini OCR request failed with status ${status}.`;
 }
-
-function getErrorStatus(error: unknown) { return typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : null; }
-function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function getInputImagePart(input: ShelfRecognitionInput) {
   if ("imageUrl" in input && input.imageUrl) return { file_data: { mime_type: "image/jpeg", file_uri: input.imageUrl } };

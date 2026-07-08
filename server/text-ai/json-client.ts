@@ -1,4 +1,5 @@
 import { getAiRuntimeConfig } from "../ai-config";
+import { AiHttpError, isAiFallbackCandidate, withAiRetry } from "../ai-retry";
 
 export type TextAiMessage = {
   role: "system" | "user" | "assistant";
@@ -36,9 +37,6 @@ type ChatCompletionsResponse = {
 };
 
 const DEFAULT_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-const FALLBACK_STATUSES = new Set([429, 503]);
-const MAX_ATTEMPTS = 3;
 
 export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Promise<TextAiJsonResult<T>> {
   const aiConfig = getAiRuntimeConfig();
@@ -58,8 +56,7 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
       return await runTextAiJsonWithModel<T>({ provider: aiConfig.text.provider, model, system, user });
     } catch (error) {
       lastError = error;
-      const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : null;
-      if (index === 0 && FALLBACK_STATUSES.has(status ?? 0) && models.length > 1) continue;
+      if (index === 0 && isAiFallbackCandidate(error) && models.length > 1) continue;
       throw error;
     }
   }
@@ -79,46 +76,72 @@ async function runTextAiJsonWithModel<T>({ provider, model, system, user }: { pr
     throw new Error("AI-провайдер отключен или не поддерживается. Проверьте AI_VISION_PROVIDER и AI_TEXT_PROVIDER.");
   }
 
+  return runTextModel<T>({
+    apiKey,
+    baseUrl,
+    model,
+    provider,
+    system,
+    user,
+  });
+}
+
+async function runTextModel<T>({
+  apiKey,
+  baseUrl,
+  model,
+  provider,
+  system,
+  user,
+}: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  provider: string;
+  system: string;
+  user: string;
+}): Promise<TextAiJsonResult<T>> {
   const endpoint = new URL("chat/completions", ensureTrailingSlash(baseUrl));
   const messages: TextAiMessage[] = [
     { role: "system", content: system },
     { role: "user", content: user },
   ];
 
-  let body: ChatCompletionsResponse | null = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+  const body = await withAiRetry(async () => {
     const response = await fetch(endpoint.toString(), {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages, response_format: { type: "json_object" }, temperature: 0 }),
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        response_format: { type: "json_object" },
+        temperature: 0,
+      }),
     });
 
-    body = (await response.json().catch(() => null)) as ChatCompletionsResponse | null;
-    if (response.ok) break;
+    const responseBody = (await response.json().catch(() => null)) as ChatCompletionsResponse | null;
 
-    const error = toTextAiHttpError(response.status, body?.error?.message);
-    if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_ATTEMPTS) throw error;
-    await sleep(250 * 2 ** (attempt - 1));
-  }
+    if (!response.ok) {
+      throw new AiHttpError(responseBody?.error?.message || `Text AI request failed with status ${response.status}.`, response.status);
+    }
 
+    return responseBody;
+  });
   const content = body?.choices?.[0]?.message?.content;
   if (!content) throw new Error("Text AI response did not contain message content.");
 
   return {
     data: JSON.parse(content) as T,
-    usage: { provider, model, input_tokens: body?.usage?.prompt_tokens ?? 0, output_tokens: body?.usage?.completion_tokens ?? 0 },
+    usage: {
+      provider,
+      model,
+      input_tokens: body?.usage?.prompt_tokens ?? 0,
+      output_tokens: body?.usage?.completion_tokens ?? 0,
+    },
   };
-}
-
-function toTextAiHttpError(status: number, message: string | undefined) {
-  const safeMessage = status === 429 ? "Превышен лимит Gemini API. Подождите и повторите запрос." : status === 503 ? "Gemini временно перегружен. Повторите позже или переключите модель в Vercel." : message || `Text AI request failed with status ${status}.`;
-  const error = new Error(safeMessage) as Error & { status?: number };
-  error.status = status;
-  return error;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getProviderApiKey(provider: string) {
