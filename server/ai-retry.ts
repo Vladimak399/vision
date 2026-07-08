@@ -24,7 +24,9 @@ export function isAiFallbackCandidate(error: unknown) {
 }
 
 export async function withAiRetry<T>(operation: () => Promise<T>, options: AiRetryOptions = {}) {
-  const maxAttempts = options.maxAttempts ?? 2;
+  // Default 3: preserves previous MAX_ATTEMPTS=3 used by json-client/gemini before refactor.
+  // Lowering to 2 would drop the third retry and cause premature fallback on transient 429/5xx.
+  const maxAttempts = options.maxAttempts ?? 3;
   const baseDelayMs = options.baseDelayMs ?? 350;
   let lastError: unknown;
 
