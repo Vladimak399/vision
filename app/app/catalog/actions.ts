@@ -360,6 +360,19 @@ export async function importCatalogAction(
 
 export async function createProductAction(formData: FormData) {
   try {
+    // Permission gate (Finding H-3): manual catalog product creation must be
+    // restricted to admin/manager, matching importCatalogAction and the
+    // catalog_manager_write RLS policy. Reviewers cannot alter the catalog.
+    const membershipResult = await getPrimaryCompanyMembership();
+    if (membershipResult.status !== "ok" || !membershipResult.membership) {
+      throw new Error("Нет доступа к компании.");
+    }
+    if (!hasCompanyRole(membershipResult.membership, CATALOG_WRITE_ROLES)) {
+      throw new Error(
+        `Недостаточно прав. Создавать товары каталога могут только ${roleList(CATALOG_WRITE_ROLES)}.`,
+      );
+    }
+
     const externalSku = formData.get("external_sku");
     const name = formData.get("name");
     const brand = formData.get("brand");

@@ -16,13 +16,15 @@
 - [ ] Backup/rollback и runbook проверены
 - [ ] Admin/manager/reviewer acceptance (пользователь один — сам автор)
 
-## Текущая позиция (2026-07-07)
+## Текущая позиция (2026-07-08)
 
-- ✅ Запуск починен: typecheck/lint/test/build/dev — всё зелёное
+- ✅ Запуск починен: typecheck/lint/build/dev — зелёные (test падает по причине окружения Windows+Node24, не связан с кодом — см. CHANGELOG)
 - ✅ База: auth, schema (18 таблиц), RLS, каталог, мониторинг, загрузка фото, manual fallback
 - ✅ AI Vision адаптер существует (`server/shelf-recognition/`), но не подключён к jobs
+- ✅ **PR #69 слит в main**: `server/ai-retry.ts` — общий retry/fallback хелпер для AI-провайдеров (основа Фазы 3.3)
+- ✅ **PR #70 слит в main**: fix(H-4) — active company cookie + switcher. H-4 закрыт.
+- ✅ **Перепроверка Фазы 1 (заявленные «слитые» баги):** H-1 и S-4 действительно в main (код есть); H-4 был открыт — закрыт PR #70. Заметка про «30 незакрытых веток» устарела — убрана.
 - ❌ 1 critical + 6 high багов блокируют AI/OCR (см. `docs/audits/full-project-audit-before-ai-and-web-sources.md`)
-- ❌ ~30 незакрытых веток от прошлой AI-работы
 - ❌ Session/photo lifecycle статичен (status = draft)
 - ❌ Нет review queue, нет OCR result storage, нет signed URLs
 
@@ -57,11 +59,11 @@
 ### Фаза 1 — Закрыть критичные баги безопасности
 Цель: security/RLS review = зелёный (go-live criterion). **Блокер для AI/OCR.**
 
-- [ ] 1.1 Open redirect на `/login` (Finding H-1)
-- [ ] 1.2 RLS-дыра в `catalog_import_rows` (Finding S-4 / C-1)
-- [ ] 1.3 Role checks: stores/competitors/catalog (H-2, H-3, S-3)
+- [x] 1.1 Open redirect на `/login` (Finding H-1) — ✅ в main: `app/login/login-form.tsx` `getSafeNextPath()` allowlist на `/app...`
+- [~] 1.2 RLS-дыра в `catalog_import_rows` (Finding S-4 / C-1) — код миграции в main (`20260706152000`), применение к прод-БД требует проверки через dashboard
+- [~] 1.3 Role checks: stores/competitors/catalog (H-2, H-3, S-3) — H-2 guarded (RLS+app, был ок); **H-3 закрыт** (createProductAction role guard); S-3 drift уже droppнут миграцией `20260706154000`. App-side monitoring inline checks (L58/L132/L264/L405) — не тронуты, функционально эквивалентны.
 - [ ] 1.4 Catalog scoping по активной компании (H-5)
-- [ ] 1.5 Primary company — явный выбор вместо "первой" (H-4)
+- [x] 1.5 Primary company — явный выбор вместо "первой" (H-4) — ✅ слит в main (PR #70): cookie + switcher
 - [ ] 1.6 RLS tests для company isolation
 
 **Каждый шаг = отдельный PR.** Skill: `migration-safety` / `feature-safe-implementation`. Перед каждым: план + rollback. После: typecheck/lint/test/build + ручной чек.
@@ -87,7 +89,7 @@
 
 - [ ] 3.1 Worker boundary: изолированный модуль, service-role только тут (S-1)
 - [ ] 3.2 Recognition job processor (Gemini + OpenAI fallback)
-- [ ] 3.3 Retry/error handling, cost tracking — ✅ основа готова: `server/ai-retry.ts` (cherry-pick из internal-gemini-resilience)
+- [~] 3.3 Retry/error handling, cost tracking — ✅ основа **слита в main** (PR #69): `server/ai-retry.ts` (`withAiRetry`, fallback). Cost tracking — ещё нет.
 - [ ] 3.4 Structured output → recognized_items + matches
 - [ ] 3.5 Z.AI как второй провайдер: GLM-4.6V-FlashX (limited-time free → $0.04/M) как fallback после Gemini. Документация: docs.z.ai/guides/vlm/glm-4.6v. Для чистого OCR — GLM-OCR ($0.03/M). Нужен `ZAI_API_KEY` env + адаптер `server/shelf-recognition/zai.ts`.
 
