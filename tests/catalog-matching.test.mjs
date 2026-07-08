@@ -16,7 +16,7 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "--target",
   "es2022",
   "--skipLibCheck",
-], { stdio: "inherit" });
+], { stdio: "inherit", shell: true });
 
 const require = createRequire(import.meta.url);
 const { buildCatalogMatchKey, getCatalogMatchCandidates } = require("../.tmp/catalog-matching-test/catalog-matching.js");
