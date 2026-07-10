@@ -7,9 +7,11 @@ import { buildDetectorOnlyRunReport, type DetectorOnlyRunReportDto } from "../se
 import type { EvidenceDraft, PriceCaptureRunContext } from "../server/price-capture/evidence-contract";
 import { createExternalOcrWorkerEngine, createMockExternalOcrWorkerClient } from "../server/price-capture/external-ocr-worker";
 import { createUnsupportedLocalOcrEngine, type LocalOcrEngine } from "../server/price-capture/local-ocr";
-import type { PriceTagDetection } from "../server/price-capture/local-pipeline";
+import { createRussianPriceParser } from "../server/price-capture/local-price-parser";
+import type { PriceParserResult, PriceTagDetection } from "../server/price-capture/local-pipeline";
 import { mergeLocalOcrRunIntoEvidenceDrafts, type OcrEvidenceMergeMetrics } from "../server/price-capture/ocr-evidence";
 import { runLocalOcrForDraftItems, type LocalOcrDraftRunResult } from "../server/price-capture/ocr-crop";
+import { mergeParsedPricesIntoEvidenceDrafts, type ParsedPriceEvidenceMergeMetrics } from "../server/price-capture/price-evidence";
 
 export type DetectorOnlyDebugOcrMode = "unsupported-noop" | "mock-worker";
 
@@ -27,6 +29,7 @@ export type DetectorOnlyDebugCliOptions = {
   ocrMode: DetectorOnlyDebugOcrMode;
   mockOcrText: string | null;
   mockOcrConfidence: number | null;
+  parsePrice: boolean;
   pretty: boolean;
 };
 
@@ -40,11 +43,25 @@ export type DetectorOnlyDebugOcrSection = {
   skipped: LocalOcrDraftRunResult["skipped"];
 };
 
+export type DetectorOnlyDebugPriceSection = {
+  parser: "ru-price-parser-heuristic-v1";
+  metrics: ParsedPriceEvidenceMergeMetrics;
+  parsed: Array<{
+    itemId: string;
+    priceMinor: number | null;
+    oldPriceMinor: number | null;
+    promoPriceMinor: number | null;
+    confidence: number | null;
+    currency: string | null;
+  }>;
+};
+
 export type DetectorOnlyDebugOcrResponse = {
   ok: true;
   statusCode: 200;
   report: DetectorOnlyRunReportDto;
   ocr: DetectorOnlyDebugOcrSection;
+  price?: DetectorOnlyDebugPriceSection;
 };
 
 export type DetectorOnlyDebugResponse = DetectorOnlyApiResponse | DetectorOnlyDebugOcrResponse;
@@ -102,7 +119,12 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
   }
 
   const mockOcrText = stringFlag(flags, "--mock-ocr-text");
-  const withOcr = flags.has("--with-ocr") || flags.has("--ocr") || ocrMode === "mock-worker" || Boolean(mockOcrText);
+  const parsePrice = flags.has("--parse-price") || flags.has("--with-price") || flags.has("--price");
+  const withOcr = flags.has("--with-ocr")
+    || flags.has("--ocr")
+    || ocrMode === "mock-worker"
+    || Boolean(mockOcrText)
+    || parsePrice;
 
   return {
     ok: true,
@@ -120,6 +142,7 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
       ocrMode,
       mockOcrText,
       mockOcrConfidence: mockOcrConfidence === null ? null : mockOcrConfidence,
+      parsePrice,
       pretty: !flags.has("--compact"),
     },
   };
@@ -185,22 +208,70 @@ async function runDetectorOnlyDebugWithOcr(
     })),
     ocr: createDebugOcrEngine(options),
   });
-  const merged = mergeLocalOcrRunIntoEvidenceDrafts({
+  const ocrMerged = mergeLocalOcrRunIntoEvidenceDrafts({
     drafts: processingResult.drafts,
     ocrRun,
   });
-  const resultWithOcr = withMergedDrafts(processingResult, merged.drafts);
+
+  let drafts = ocrMerged.drafts;
+  let price: DetectorOnlyDebugPriceSection | undefined;
+
+  if (options.parsePrice) {
+    const parsedItems = await parsePricesForOcrRun(processingResult.run, ocrRun);
+    const priceMerged = mergeParsedPricesIntoEvidenceDrafts({
+      drafts,
+      parsedItems,
+    });
+    drafts = priceMerged.drafts;
+    price = {
+      parser: "ru-price-parser-heuristic-v1",
+      metrics: priceMerged.metrics,
+      parsed: parsedItems.map((item) => ({
+        itemId: item.itemId,
+        priceMinor: item.parsedPrice?.priceMinor ?? null,
+        oldPriceMinor: item.parsedPrice?.oldPriceMinor ?? null,
+        promoPriceMinor: item.parsedPrice?.promoPriceMinor ?? null,
+        confidence: typeof item.parsedPrice?.confidence === "number" ? item.parsedPrice.confidence : null,
+        currency: item.parsedPrice?.currency ?? null,
+      })),
+    };
+  }
+
+  const result = withMergedDrafts(processingResult, drafts);
 
   return {
     ok: true,
     statusCode: 200,
-    report: buildDetectorOnlyRunReport(resultWithOcr),
+    report: buildDetectorOnlyRunReport(result),
     ocr: {
       mode: options.ocrMode,
-      metrics: merged.metrics,
+      metrics: ocrMerged.metrics,
       skipped: ocrRun.skipped,
     },
+    ...(price ? { price } : {}),
   };
+}
+
+async function parsePricesForOcrRun(
+  run: PriceCaptureRunContext,
+  ocrRun: LocalOcrDraftRunResult,
+): Promise<Array<{ itemId: string; parsedPrice: PriceParserResult | null }>> {
+  const parser = createRussianPriceParser();
+  const parsed: Array<{ itemId: string; parsedPrice: PriceParserResult | null }> = [];
+
+  for (const item of ocrRun.items) {
+    const parsedPrice = await parser.parse({
+      run,
+      detection: item.detection,
+      ocr: item.ocr,
+    });
+    parsed.push({
+      itemId: item.itemId,
+      parsedPrice,
+    });
+  }
+
+  return parsed;
 }
 
 function createDebugOcrEngine(options: DetectorOnlyDebugCliOptions): LocalOcrEngine {
@@ -333,6 +404,7 @@ function usage(reason: string): string {
     "  --ocr-mode <mode>             unsupported-noop | mock-worker",
     "  --mock-ocr-text <text>        Text returned by mock-worker OCR mode",
     "  --mock-ocr-confidence <0..1>  Confidence returned by mock-worker OCR mode",
+    "  --parse-price                 Parse price from OCR text and include price section",
     "  --compact                     Print compact JSON",
   ].join("\n");
 }
