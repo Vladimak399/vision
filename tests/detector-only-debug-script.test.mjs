@@ -22,6 +22,9 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "server/price-capture/detector-only-orchestrator.ts",
   "server/price-capture/detector-only-report.ts",
   "server/price-capture/detector-only-api-boundary.ts",
+  "server/price-capture/local-ocr.ts",
+  "server/price-capture/ocr-crop.ts",
+  "server/price-capture/ocr-evidence.ts",
   "scripts/detector-only-debug.ts",
   "--outDir",
   ".tmp/detector-only-debug-script-test",
@@ -69,8 +72,16 @@ test("parses detector-only debug CLI arguments", () => {
     contentType: "image/png",
     cropExtension: "webp",
     cropPaddingPixels: 3,
+    withOcr: false,
     pretty: false,
   });
+});
+
+test("parses detector-only debug OCR flag", () => {
+  const parsed = parseDetectorOnlyDebugArgs(["./shelf.png", "--with-ocr"]);
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.options.withOcr, true);
 });
 
 test("returns usage errors for missing path or invalid options", () => {
@@ -109,12 +120,14 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
     contentType: "image/png",
     cropExtension: "png",
     cropPaddingPixels: 1,
+    withOcr: false,
     pretty: false,
   });
 
   const response = JSON.parse(json);
   assert.equal(response.ok, true);
   assert.equal(response.statusCode, 200);
+  assert.equal(response.ocr, undefined);
   assert.equal(response.report.schemaVersion, "detector-only-report-v1");
   assert.equal(response.report.run.companyId, "company-debug");
   assert.equal(response.report.run.storeId, "store-debug");
@@ -125,8 +138,40 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
   assert.equal(response.report.summary.detectorProvider, "local");
   assert.equal(response.report.summary.aiUsedCount, 0);
   assert.equal(response.report.summary.aiCostMicrousd, 0);
+  assert.equal(response.report.summary.ocr.processedCount, 0);
   assert.ok(response.report.summary.detectedCount >= 1);
   assert.ok(response.report.drafts.length >= 1);
+  assert.equal(JSON.stringify(response).includes("bytes"), false);
+});
+
+test("runs detector-only debug script with no-op OCR section", async () => {
+  const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-ocr.png";
+  await writeFile(pngPath, await createSyntheticShelfPng());
+
+  const json = await runDetectorOnlyDebug({
+    imagePath: pngPath,
+    companyId: "company-debug",
+    storeId: "store-debug",
+    week: 1,
+    runId: "run-debug-ocr-1",
+    capturedDate: "2026-07-10",
+    contentType: "image/png",
+    cropExtension: "png",
+    cropPaddingPixels: 1,
+    withOcr: true,
+    pretty: false,
+  });
+
+  const response = JSON.parse(json);
+  assert.equal(response.ok, true);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.ocr.mode, "unsupported-noop");
+  assert.ok(response.ocr.metrics.ocrProcessedCount >= 1);
+  assert.equal(response.ocr.metrics.ocrTextResultCount, 0);
+  assert.ok(response.ocr.metrics.ocrEmptyResultCount >= 1);
+  assert.equal(response.report.summary.ocr.processedCount, response.ocr.metrics.ocrProcessedCount);
+  assert.equal(response.report.summary.ocr.textResultCount, 0);
+  assert.ok(response.report.drafts.some((draft) => draft.ocr?.provider === "local"));
   assert.equal(JSON.stringify(response).includes("bytes"), false);
 });
 
