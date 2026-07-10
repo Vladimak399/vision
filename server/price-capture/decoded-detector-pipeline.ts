@@ -2,7 +2,7 @@ import { decodedImageToDetectorPhotoInput, type DecodedImagePixels, type Encoded
 import { createHeuristicPriceTagDetector, type HeuristicPriceTagDetectorOptions } from "./heuristic-price-tag-detector";
 import { createSharpImageDecoder, type SharpImageDecoderOptions } from "./sharp-image-decoder";
 import type { PriceCaptureRunContext } from "./evidence-contract";
-import type { PipelineStepReport, PriceTagDetection, PriceTagDetector, PriceTagDetectorResult } from "./local-pipeline";
+import type { PriceTagDetection, PriceTagDetector, PriceTagDetectorResult } from "./local-pipeline";
 
 export type EncodedDetectorPipelineInput = {
   run: PriceCaptureRunContext;
@@ -11,12 +11,20 @@ export type EncodedDetectorPipelineInput = {
   detector: PriceTagDetector;
 };
 
+export type EncodedDetectorPipelineStepReport = {
+  step: "decode_image" | "detect";
+  status: "completed" | "failed";
+  durationMs: number;
+  errorMessage?: string | null;
+  diagnostics?: Record<string, unknown>;
+};
+
 export type EncodedDetectorPipelineResult = {
   detections: PriceTagDetection[];
   decodedImage: DecodedImagePixels | null;
   detectorResult: PriceTagDetectorResult | null;
   decodeError: ImageDecodeError | null;
-  steps: PipelineStepReport[];
+  steps: EncodedDetectorPipelineStepReport[];
   diagnostics: {
     decoderProvider: string;
     decoderModel: string;
@@ -31,7 +39,7 @@ export type SharpHeuristicDetectorPipelineOptions = {
 };
 
 export async function detectPriceTagsFromEncodedImage(input: EncodedDetectorPipelineInput): Promise<EncodedDetectorPipelineResult> {
-  const steps: PipelineStepReport[] = [];
+  const steps: EncodedDetectorPipelineStepReport[] = [];
   const decodeStartedAt = Date.now();
   const decodeResult = await input.decoder.decode(input.image);
 
