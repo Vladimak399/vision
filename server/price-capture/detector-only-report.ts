@@ -21,8 +21,15 @@ export type DetectorOnlyRunReportRunDto = {
   capturedDate: string | null;
 };
 
+export type DetectorOnlyRunReportOcrSummaryDto = {
+  processedCount: number;
+  textResultCount: number;
+  emptyResultCount: number;
+};
+
 export type DetectorOnlyRunReportSummaryDto = DetectorOnlyProcessingSummary & {
   statusReason: "ok" | "decode_failed" | "partial_invalid_crops" | "no_detections";
+  ocr: DetectorOnlyRunReportOcrSummaryDto;
 };
 
 export type DetectorOnlyRunReportDetectionDto = {
@@ -33,6 +40,13 @@ export type DetectorOnlyRunReportDetectionDto = {
   confidence: number;
   provider: string;
   model: string;
+};
+
+export type DetectorOnlyRunReportDraftOcrDto = {
+  provider: string | null;
+  model: string | null;
+  text: string | null;
+  confidence: number | null;
 };
 
 export type DetectorOnlyRunReportDraftDto = {
@@ -62,6 +76,7 @@ export type DetectorOnlyRunReportDraftDto = {
     priceMinor: number | null;
     currency: string;
   };
+  ocr?: DetectorOnlyRunReportDraftOcrDto;
 };
 
 export type DetectorOnlyRunReportSkippedDto = {
@@ -95,6 +110,7 @@ export function buildDetectorOnlyRunReport(result: DetectorOnlyProcessingResult)
     summary: {
       ...result.summary,
       statusReason: resolveStatusReason(result),
+      ocr: buildOcrSummary(result.drafts),
     },
     detections: result.detectorRun.detections.map((detection, index) => ({
       index,
@@ -132,6 +148,14 @@ export function buildDetectorOnlyRunReport(result: DetectorOnlyProcessingResult)
         priceMinor: draft.row.price_minor,
         currency: draft.row.currency,
       },
+      ...(hasOcrEvidence(draft.row) ? {
+        ocr: {
+          provider: emptyToNull(draft.row.ocr_provider),
+          model: emptyToNull(draft.row.ocr_model),
+          text: emptyToNull(draft.row.ocr_text),
+          confidence: clampNullableConfidence(draft.row.ocr_confidence),
+        },
+      } : {}),
     })),
     skipped: result.skipped.map((skipped, index) => ({
       index,
@@ -161,9 +185,34 @@ function resolveStatusReason(result: DetectorOnlyProcessingResult): DetectorOnly
   return "ok";
 }
 
+function buildOcrSummary(drafts: DetectorOnlyProcessingResult["drafts"]): DetectorOnlyRunReportOcrSummaryDto {
+  const processed = drafts.filter((draft) => hasOcrEvidence(draft.row));
+  const textResultCount = processed.filter((draft) => Boolean(emptyToNull(draft.row.ocr_text))).length;
+
+  return {
+    processedCount: processed.length,
+    textResultCount,
+    emptyResultCount: processed.length - textResultCount,
+  };
+}
+
+function hasOcrEvidence(row: DetectorOnlyProcessingResult["drafts"][number]["row"]): boolean {
+  return Boolean(
+    emptyToNull(row.ocr_provider)
+    || emptyToNull(row.ocr_model)
+    || emptyToNull(row.ocr_text)
+    || row.ocr_confidence !== null,
+  );
+}
+
 function clampConfidence(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(Math.max(value, 0), 1);
+}
+
+function clampNullableConfidence(value?: number | null): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return clampConfidence(value);
 }
 
 function emptyToNull(value?: string | null): string | null {
