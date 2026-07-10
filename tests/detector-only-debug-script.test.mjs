@@ -26,6 +26,7 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "server/price-capture/ocr-crop.ts",
   "server/price-capture/ocr-evidence.ts",
   "server/price-capture/external-ocr-worker.ts",
+  "server/price-capture/http-ocr-worker-client.ts",
   "server/price-capture/local-price-parser.ts",
   "server/price-capture/price-evidence.ts",
   "server/price-capture/local-product-text-extractor.ts",
@@ -79,6 +80,8 @@ test("parses detector-only debug CLI arguments", () => {
     cropPaddingPixels: 3,
     withOcr: false,
     ocrMode: "unsupported-noop",
+    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
+    ocrWorkerTimeoutMs: 30000,
     mockOcrText: null,
     mockOcrConfidence: null,
     parsePrice: false,
@@ -105,6 +108,24 @@ test("parses mock OCR worker, price parser, and product text debug flags", () =>
   assert.equal(parsed.options.extractProductText, true);
 });
 
+test("parses RapidOCR worker debug flags", () => {
+  const parsed = parseDetectorOnlyDebugArgs([
+    "./shelf.jpg",
+    "--ocr-mode", "rapidocr-worker",
+    "--ocr-worker-url", "http://127.0.0.1:8765/ocr",
+    "--ocr-worker-timeout-ms", "1234",
+    "--extract-product-text",
+  ]);
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.options.withOcr, true);
+  assert.equal(parsed.options.ocrMode, "rapidocr-worker");
+  assert.equal(parsed.options.ocrWorkerUrl, "http://127.0.0.1:8765/ocr");
+  assert.equal(parsed.options.ocrWorkerTimeoutMs, 1234);
+  assert.equal(parsed.options.parsePrice, true);
+  assert.equal(parsed.options.extractProductText, true);
+});
+
 test("returns usage errors for missing path or invalid options", () => {
   const missing = parseDetectorOnlyDebugArgs([]);
   assert.equal(missing.ok, false);
@@ -125,6 +146,10 @@ test("returns usage errors for missing path or invalid options", () => {
   const invalidOcrConfidence = parseDetectorOnlyDebugArgs(["./shelf.jpg", "--mock-ocr-confidence", "2"]);
   assert.equal(invalidOcrConfidence.ok, false);
   assert.match(invalidOcrConfidence.error, /--mock-ocr-confidence/);
+
+  const invalidOcrWorkerTimeout = parseDetectorOnlyDebugArgs(["./shelf.jpg", "--ocr-worker-timeout-ms", "0"]);
+  assert.equal(invalidOcrWorkerTimeout.ok, false);
+  assert.match(invalidOcrWorkerTimeout.error, /--ocr-worker-timeout-ms/);
 });
 
 test("infers supported image content types", () => {
@@ -151,6 +176,8 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
     cropPaddingPixels: 1,
     withOcr: false,
     ocrMode: "unsupported-noop",
+    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
+    ocrWorkerTimeoutMs: 30000,
     mockOcrText: null,
     mockOcrConfidence: null,
     parsePrice: false,
@@ -195,6 +222,8 @@ test("runs debug script with mock OCR worker over extracted crops", async () => 
     cropPaddingPixels: 1,
     withOcr: true,
     ocrMode: "mock-worker",
+    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
+    ocrWorkerTimeoutMs: 30000,
     mockOcrText: "Цена 99 90",
     mockOcrConfidence: 0.77,
     parsePrice: false,
@@ -232,6 +261,8 @@ test("runs debug script with mock OCR worker and parses price into report drafts
     cropPaddingPixels: 1,
     withOcr: true,
     ocrMode: "mock-worker",
+    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
+    ocrWorkerTimeoutMs: 30000,
     mockOcrText: "Старая цена 129,90\nАкция 99,90",
     mockOcrConfidence: 0.88,
     parsePrice: true,
@@ -269,6 +300,8 @@ test("runs debug script with full mock OCR price and product text flow", async (
     cropPaddingPixels: 1,
     withOcr: true,
     ocrMode: "mock-worker",
+    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
+    ocrWorkerTimeoutMs: 30000,
     mockOcrText: "Кофе Жокей Традиционный 250 г\nСтарая цена 129,90\nАкция 99,90",
     mockOcrConfidence: 0.91,
     parsePrice: true,
@@ -289,6 +322,74 @@ test("runs debug script with full mock OCR price and product text flow", async (
   assert.equal(response.productText.extracted[0].rawName, "Кофе Жокей Традиционный 250 г");
   assert.equal(response.productText.extracted[0].normalizedProductText, "кофе жокей традиционный 250 г");
   assert.equal(JSON.stringify(response).includes("bytes"), false);
+});
+
+test("runs debug script through RapidOCR HTTP worker mode using a fake HTTP worker", async () => {
+  const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-rapidocr-worker.png";
+  await writeFile(pngPath, await createSyntheticShelfPng());
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url, body });
+
+    assert.equal(body.schemaVersion, "pricevision-ocr-worker-request-v1");
+    assert.equal(body.image.pixelFormat, "rgba");
+    assert.ok(body.image.bytesBase64.length > 0);
+    assert.equal(body.context.companyId, "company-debug");
+
+    return new Response(JSON.stringify({
+      schemaVersion: "pricevision-ocr-worker-response-v1",
+      requestId: body.requestId,
+      ok: true,
+      provider: "rapidocr-worker",
+      model: "rapidocr-v1",
+      text: "Кофе Жокей Традиционный 250 г\nСтарая цена 129,90\nАкция 99,90",
+      confidence: 0.83,
+      blocks: [],
+      diagnostics: { source: "fake-http-worker" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const json = await runDetectorOnlyDebug({
+      imagePath: pngPath,
+      companyId: "company-debug",
+      storeId: "store-debug",
+      week: 1,
+      runId: "run-debug-rapidocr-worker",
+      capturedDate: "2026-07-10",
+      contentType: "image/png",
+      cropExtension: "png",
+      cropPaddingPixels: 1,
+      withOcr: true,
+      ocrMode: "rapidocr-worker",
+      ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
+      ocrWorkerTimeoutMs: 30000,
+      mockOcrText: null,
+      mockOcrConfidence: null,
+      parsePrice: true,
+      extractProductText: true,
+      pretty: false,
+    });
+
+    const response = JSON.parse(json);
+    assert.equal(response.ok, true);
+    assert.equal(response.ocr.mode, "rapidocr-worker");
+    assert.ok(calls.length >= 1);
+    assert.equal(response.report.drafts[0].ocr.provider, "rapidocr-worker");
+    assert.equal(response.report.drafts[0].ocr.confidence, 0.83);
+    assert.equal(response.report.drafts[0].product.priceMinor, 9990);
+    assert.equal(response.report.drafts[0].product.rawName, "Кофе Жокей Традиционный 250 г");
+    assert.equal(response.report.drafts[0].product.normalizedProductText, "кофе жокей традиционный 250 г");
+    assert.equal(JSON.stringify(response).includes("bytes"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 async function createSyntheticShelfPng() {

@@ -6,6 +6,7 @@ import { createSharpHeuristicDetectorOnlyProcessor, type DetectorOnlyProcessingR
 import { buildDetectorOnlyRunReport, type DetectorOnlyRunReportDto } from "../server/price-capture/detector-only-report";
 import type { EvidenceDraft, PriceCaptureRunContext } from "../server/price-capture/evidence-contract";
 import { createExternalOcrWorkerEngine, createMockExternalOcrWorkerClient } from "../server/price-capture/external-ocr-worker";
+import { createHttpOcrWorkerClient } from "../server/price-capture/http-ocr-worker-client";
 import { createUnsupportedLocalOcrEngine, type LocalOcrEngine } from "../server/price-capture/local-ocr";
 import { createRussianPriceParser } from "../server/price-capture/local-price-parser";
 import { createLocalProductTextExtractor } from "../server/price-capture/local-product-text-extractor";
@@ -15,7 +16,7 @@ import { runLocalOcrForDraftItems, type LocalOcrDraftRunResult } from "../server
 import { mergeParsedPricesIntoEvidenceDrafts, type ParsedPriceEvidenceMergeMetrics } from "../server/price-capture/price-evidence";
 import { mergeProductTextsIntoEvidenceDrafts, type ProductTextEvidenceMergeMetrics } from "../server/price-capture/product-text-evidence";
 
-export type DetectorOnlyDebugOcrMode = "unsupported-noop" | "mock-worker";
+export type DetectorOnlyDebugOcrMode = "unsupported-noop" | "mock-worker" | "rapidocr-worker";
 
 export type DetectorOnlyDebugCliOptions = {
   imagePath: string;
@@ -29,6 +30,8 @@ export type DetectorOnlyDebugCliOptions = {
   cropPaddingPixels: number;
   withOcr: boolean;
   ocrMode: DetectorOnlyDebugOcrMode;
+  ocrWorkerUrl: string | null;
+  ocrWorkerTimeoutMs: number | null;
   mockOcrText: string | null;
   mockOcrConfidence: number | null;
   parsePrice: boolean;
@@ -84,6 +87,8 @@ const DEFAULT_COMPANY_ID = "local-debug-company";
 const DEFAULT_STORE_ID = "local-debug-store";
 const DEFAULT_RUN_ID = "local-debug-run";
 const DEFAULT_CROP_PADDING_PIXELS = 1;
+const DEFAULT_OCR_WORKER_URL = "http://127.0.0.1:8765/ocr";
+const DEFAULT_OCR_WORKER_TIMEOUT_MS = 30_000;
 
 export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCliParseResult {
   const flags = new Map<string, string | true>();
@@ -125,11 +130,18 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
   }
 
   const ocrMode = parseOcrMode(stringFlag(flags, "--ocr-mode") ?? "unsupported-noop");
-  if (!ocrMode) return { ok: false, error: usage("--ocr-mode must be unsupported-noop or mock-worker") };
+  if (!ocrMode) {
+    return { ok: false, error: usage("--ocr-mode must be unsupported-noop, mock-worker, or rapidocr-worker") };
+  }
 
   const mockOcrConfidence = parseNullableUnitFloat(stringFlag(flags, "--mock-ocr-confidence"));
   if (mockOcrConfidence === false) {
     return { ok: false, error: usage("--mock-ocr-confidence must be a number from 0 to 1") };
+  }
+
+  const ocrWorkerTimeoutMs = parseNullablePositiveInteger(stringFlag(flags, "--ocr-worker-timeout-ms"));
+  if (ocrWorkerTimeoutMs === false) {
+    return { ok: false, error: usage("--ocr-worker-timeout-ms must be a positive integer") };
   }
 
   const mockOcrText = stringFlag(flags, "--mock-ocr-text");
@@ -144,6 +156,7 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
   const withOcr = flags.has("--with-ocr")
     || flags.has("--ocr")
     || ocrMode === "mock-worker"
+    || ocrMode === "rapidocr-worker"
     || Boolean(mockOcrText)
     || parsePrice
     || extractProductText;
@@ -162,6 +175,8 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
       cropPaddingPixels,
       withOcr,
       ocrMode,
+      ocrWorkerUrl: stringFlag(flags, "--ocr-worker-url") ?? stringFromEnv("PRICEVISION_OCR_WORKER_URL") ?? DEFAULT_OCR_WORKER_URL,
+      ocrWorkerTimeoutMs: ocrWorkerTimeoutMs === null ? DEFAULT_OCR_WORKER_TIMEOUT_MS : ocrWorkerTimeoutMs,
       mockOcrText,
       mockOcrConfidence: mockOcrConfidence === null ? null : mockOcrConfidence,
       parsePrice,
@@ -354,6 +369,15 @@ function createDebugOcrEngine(options: DetectorOnlyDebugCliOptions): LocalOcrEng
     return createExternalOcrWorkerEngine({ client });
   }
 
+  if (options.ocrMode === "rapidocr-worker") {
+    const client = createHttpOcrWorkerClient({
+      url: options.ocrWorkerUrl ?? DEFAULT_OCR_WORKER_URL,
+      timeoutMs: options.ocrWorkerTimeoutMs ?? DEFAULT_OCR_WORKER_TIMEOUT_MS,
+    });
+
+    return createExternalOcrWorkerEngine({ client });
+  }
+
   return createUnsupportedLocalOcrEngine({ diagnostics: { source: "detector-only-debug" } });
 }
 
@@ -429,6 +453,11 @@ function stringFlag(flags: Map<string, string | true>, name: string): string | n
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function stringFromEnv(name: string): string | null {
+  const value = process.env[name];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 function parseWeek(value: string): 1 | 2 | null {
   if (value === "1") return 1;
   if (value === "2") return 2;
@@ -438,12 +467,20 @@ function parseWeek(value: string): 1 | 2 | null {
 function parseOcrMode(value: string): DetectorOnlyDebugOcrMode | null {
   if (value === "unsupported-noop" || value === "noop") return "unsupported-noop";
   if (value === "mock-worker" || value === "mock") return "mock-worker";
+  if (value === "rapidocr-worker" || value === "rapidocr" || value === "http-worker") return "rapidocr-worker";
   return null;
 }
 
 function parseNonNegativeInteger(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
   return Number.parseInt(value, 10);
+}
+
+function parseNullablePositiveInteger(value: string | null): number | null | false {
+  if (value === null) return null;
+  if (!/^\d+$/.test(value)) return false;
+  const parsed = Number.parseInt(value, 10);
+  return parsed > 0 ? parsed : false;
 }
 
 function parseNullableUnitFloat(value: string | null): number | null | false {
@@ -461,21 +498,23 @@ function usage(reason: string): string {
     "  npm run debug:detector-only -- ./photo.jpg [options]",
     "",
     "Options:",
-    "  --company-id <id>             Default: local-debug-company",
-    "  --store-id <id>               Default: local-debug-store",
-    "  --week <1|2>                  Default: 1",
-    "  --run-id <id>                 Default: local-debug-run",
-    "  --captured-date <date>        Default: today in YYYY-MM-DD",
-    "  --content-type <mime>         Default: inferred from extension",
-    "  --crop-extension <ext>        Default: inferred from extension",
-    "  --crop-padding <pixels>       Default: 1",
-    "  --with-ocr                   Run OCR over extracted crops and include OCR section",
-    "  --ocr-mode <mode>             unsupported-noop | mock-worker",
-    "  --mock-ocr-text <text>        Text returned by mock-worker OCR mode",
-    "  --mock-ocr-confidence <0..1>  Confidence returned by mock-worker OCR mode",
-    "  --parse-price                 Parse price from OCR text and include price section",
-    "  --extract-product-text        Extract product text from OCR text and include productText section",
-    "  --compact                     Print compact JSON",
+    "  --company-id <id>                 Default: local-debug-company",
+    "  --store-id <id>                   Default: local-debug-store",
+    "  --week <1|2>                      Default: 1",
+    "  --run-id <id>                     Default: local-debug-run",
+    "  --captured-date <date>            Default: today in YYYY-MM-DD",
+    "  --content-type <mime>             Default: inferred from extension",
+    "  --crop-extension <ext>            Default: inferred from extension",
+    "  --crop-padding <pixels>           Default: 1",
+    "  --with-ocr                       Run OCR over extracted crops and include OCR section",
+    "  --ocr-mode <mode>                 unsupported-noop | mock-worker | rapidocr-worker",
+    "  --ocr-worker-url <url>            Default: PRICEVISION_OCR_WORKER_URL or http://127.0.0.1:8765/ocr",
+    "  --ocr-worker-timeout-ms <ms>      Default: 30000",
+    "  --mock-ocr-text <text>            Text returned by mock-worker OCR mode",
+    "  --mock-ocr-confidence <0..1>      Confidence returned by mock-worker OCR mode",
+    "  --parse-price                     Parse price from OCR text and include price section",
+    "  --extract-product-text            Extract product text from OCR text and include productText section",
+    "  --compact                         Print compact JSON",
   ].join("\n");
 }
 
