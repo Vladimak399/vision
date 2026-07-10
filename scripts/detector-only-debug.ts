@@ -37,6 +37,8 @@ export type DetectorOnlyDebugCliOptions = {
   mockOcrConfidence: number | null;
   parsePrice: boolean;
   extractProductText: boolean;
+  dumpCrops: boolean;
+  cropDumpDir: string | null;
   pretty: boolean;
 };
 
@@ -55,6 +57,7 @@ export type DetectorOnlyDebugOcrItem = {
   confidence: number | null;
   blockCount: number;
   diagnostics: Record<string, unknown> | null;
+  cropDiagnostics: Record<string, unknown> | null;
 };
 
 export type DetectorOnlyDebugSkippedOcrItem = {
@@ -73,6 +76,8 @@ export type DetectorOnlyDebugOcrSection = {
   diagnostics: {
     workerUrl: string | null;
     timeoutMs: number | null;
+    dumpCrops: boolean;
+    cropDumpDir: string | null;
   };
 };
 
@@ -116,6 +121,7 @@ const DEFAULT_RUN_ID = "local-debug-run";
 const DEFAULT_CROP_PADDING_PIXELS = 1;
 const DEFAULT_OCR_WORKER_URL = "http://127.0.0.1:8765/ocr";
 const DEFAULT_OCR_WORKER_TIMEOUT_MS = 30_000;
+const DEFAULT_CROP_DUMP_DIR = "tmp/real-photo-runs/crops";
 const TEXT_PREVIEW_MAX_LENGTH = 160;
 const DIAGNOSTICS_MAX_DEPTH = 4;
 const DIAGNOSTICS_MAX_KEYS = 24;
@@ -213,6 +219,8 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
       mockOcrConfidence: mockOcrConfidence === null ? null : mockOcrConfidence,
       parsePrice,
       extractProductText,
+      dumpCrops: flags.has("--dump-crops"),
+      cropDumpDir: stringFlag(flags, "--crop-dump-dir") ?? DEFAULT_CROP_DUMP_DIR,
       pretty: !flags.has("--compact"),
     },
   };
@@ -277,6 +285,11 @@ async function runDetectorOnlyDebugWithOcr(
       detection: evidenceDraftToDetection(draft),
     })),
     ocr: createDebugOcrEngine(options),
+    ocrCropPreprocess: {
+      dumpCrops: options.dumpCrops,
+      cropDumpDir: options.cropDumpDir,
+      sourceImageStem: path.parse(options.imagePath).name,
+    },
   });
   const ocrMerged = mergeLocalOcrRunIntoEvidenceDrafts({
     drafts: processingResult.drafts,
@@ -365,10 +378,13 @@ function buildDebugOcrSection(
       confidence: typeof item.ocr.confidence === "number" ? item.ocr.confidence : null,
       blockCount: item.ocr.blocks.length,
       diagnostics: sanitizeDiagnostics(item.ocr.diagnostics),
+      cropDiagnostics: sanitizeDiagnostics(item.cropImage.diagnostics.cropDiagnostics),
     })),
     diagnostics: {
       workerUrl: options.ocrMode === "rapidocr-worker" ? options.ocrWorkerUrl : null,
       timeoutMs: options.ocrMode === "rapidocr-worker" ? options.ocrWorkerTimeoutMs : null,
+      dumpCrops: options.dumpCrops,
+      cropDumpDir: options.dumpCrops ? options.cropDumpDir : null,
     },
   };
 }
@@ -629,6 +645,8 @@ function usage(reason: string): string {
     "  --mock-ocr-confidence <0..1>      Confidence returned by mock-worker OCR mode",
     "  --parse-price                     Parse price from OCR text and include price section",
     "  --extract-product-text            Extract product text from OCR text and include productText section",
+    "  --dump-crops                      Save original and OCR input crop PNG files in debug mode",
+    "  --crop-dump-dir <path>            Default: tmp/real-photo-runs/crops",
     "  --compact                         Print compact JSON",
   ].join("\n");
 }
