@@ -61,10 +61,7 @@ export class HeuristicPriceTagDetector implements PriceTagDetector {
   private readonly options: Required<HeuristicPriceTagDetectorOptions>;
 
   constructor(options: HeuristicPriceTagDetectorOptions = {}) {
-    this.options = {
-      ...DEFAULT_OPTIONS,
-      ...sanitizeOptions(options),
-    };
+    this.options = normalizeOptions(options);
   }
 
   async detect(input: PriceTagDetectorInput): Promise<PriceTagDetectorResult> {
@@ -288,17 +285,17 @@ function countDarkPixelsInBox(mask: Uint8Array, imageWidth: number, x: number, y
   return count;
 }
 
-function sanitizeOptions(options: HeuristicPriceTagDetectorOptions): HeuristicPriceTagDetectorOptions {
+function normalizeOptions(options: HeuristicPriceTagDetectorOptions): Required<HeuristicPriceTagDetectorOptions> {
   return {
-    brightThreshold: clampByte(options.brightThreshold),
-    darkThreshold: clampByte(options.darkThreshold),
-    minWidthPx: positiveInteger(options.minWidthPx),
-    minHeightPx: positiveInteger(options.minHeightPx),
-    minAreaPx: positiveInteger(options.minAreaPx),
-    maxWidthRatio: positiveRatio(options.maxWidthRatio),
-    maxHeightRatio: positiveRatio(options.maxHeightRatio),
-    minFillRatio: positiveRatio(options.minFillRatio),
-    maxDetections: positiveInteger(options.maxDetections),
+    brightThreshold: clampByte(options.brightThreshold) ?? DEFAULT_OPTIONS.brightThreshold,
+    darkThreshold: clampByte(options.darkThreshold) ?? DEFAULT_OPTIONS.darkThreshold,
+    minWidthPx: positiveInteger(options.minWidthPx) ?? DEFAULT_OPTIONS.minWidthPx,
+    minHeightPx: positiveInteger(options.minHeightPx) ?? DEFAULT_OPTIONS.minHeightPx,
+    minAreaPx: positiveInteger(options.minAreaPx) ?? DEFAULT_OPTIONS.minAreaPx,
+    maxWidthRatio: positiveRatio(options.maxWidthRatio) ?? DEFAULT_OPTIONS.maxWidthRatio,
+    maxHeightRatio: positiveRatio(options.maxHeightRatio) ?? DEFAULT_OPTIONS.maxHeightRatio,
+    minFillRatio: positiveRatio(options.minFillRatio) ?? DEFAULT_OPTIONS.minFillRatio,
+    maxDetections: positiveInteger(options.maxDetections) ?? DEFAULT_OPTIONS.maxDetections,
   };
 }
 
