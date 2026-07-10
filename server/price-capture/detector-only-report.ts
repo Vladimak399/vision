@@ -201,8 +201,12 @@ function hasOcrEvidence(row: DetectorOnlyProcessingResult["drafts"][number]["row
     emptyToNull(row.ocr_provider)
     || emptyToNull(row.ocr_model)
     || emptyToNull(row.ocr_text)
-    || row.ocr_confidence !== null,
+    || hasNumericConfidence(row.ocr_confidence),
   );
+}
+
+function hasNumericConfidence(value?: number | null): boolean {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function clampConfidence(value: number): number {
