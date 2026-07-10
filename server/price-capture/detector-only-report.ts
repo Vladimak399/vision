@@ -27,9 +27,17 @@ export type DetectorOnlyRunReportOcrSummaryDto = {
   emptyResultCount: number;
 };
 
+export type DetectorOnlyRunReportPriceSummaryDto = {
+  parsedCount: number;
+  pricedCount: number;
+  oldPriceCount: number;
+  promoPriceCount: number;
+};
+
 export type DetectorOnlyRunReportSummaryDto = DetectorOnlyProcessingSummary & {
   statusReason: "ok" | "decode_failed" | "partial_invalid_crops" | "no_detections";
   ocr: DetectorOnlyRunReportOcrSummaryDto;
+  price: DetectorOnlyRunReportPriceSummaryDto;
 };
 
 export type DetectorOnlyRunReportDetectionDto = {
@@ -74,6 +82,9 @@ export type DetectorOnlyRunReportDraftDto = {
     rawName: string;
     normalizedProductText: string | null;
     priceMinor: number | null;
+    oldPriceMinor: number | null;
+    promoPriceMinor: number | null;
+    parsedPriceConfidence: number | null;
     currency: string;
   };
   ocr?: DetectorOnlyRunReportDraftOcrDto;
@@ -111,6 +122,7 @@ export function buildDetectorOnlyRunReport(result: DetectorOnlyProcessingResult)
       ...result.summary,
       statusReason: resolveStatusReason(result),
       ocr: buildOcrSummary(result.drafts),
+      price: buildPriceSummary(result.drafts),
     },
     detections: result.detectorRun.detections.map((detection, index) => ({
       index,
@@ -146,6 +158,9 @@ export function buildDetectorOnlyRunReport(result: DetectorOnlyProcessingResult)
         rawName: draft.row.raw_name,
         normalizedProductText: draft.row.normalized_product_text,
         priceMinor: draft.row.price_minor,
+        oldPriceMinor: draft.row.old_price_minor,
+        promoPriceMinor: draft.row.promo_price_minor,
+        parsedPriceConfidence: clampNullableConfidence(draft.row.parsed_price_confidence),
         currency: draft.row.currency,
       },
       ...(hasOcrEvidence(draft.row) ? {
@@ -193,6 +208,17 @@ function buildOcrSummary(drafts: DetectorOnlyProcessingResult["drafts"]): Detect
     processedCount: processed.length,
     textResultCount,
     emptyResultCount: processed.length - textResultCount,
+  };
+}
+
+function buildPriceSummary(drafts: DetectorOnlyProcessingResult["drafts"]): DetectorOnlyRunReportPriceSummaryDto {
+  const parsed = drafts.filter((draft) => hasNumericConfidence(draft.row.parsed_price_confidence));
+
+  return {
+    parsedCount: parsed.length,
+    pricedCount: drafts.filter((draft) => draft.row.price_minor !== null).length,
+    oldPriceCount: drafts.filter((draft) => draft.row.old_price_minor !== null).length,
+    promoPriceCount: drafts.filter((draft) => draft.row.promo_price_minor !== null).length,
   };
 }
 
