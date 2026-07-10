@@ -37,41 +37,44 @@ Server-side evidence writes require a service-role key, but this must remain ser
 SUPABASE_SERVICE_ROLE_KEY=<paste service_role key only in server runtime>
 ```
 
-Evidence persistence write mode remains blocked unless both variables are explicitly set:
+Evidence persistence write mode remains blocked unless all three variables are explicitly set:
 
 ```bash
 PRICEVISION_EVIDENCE_PERSISTENCE_MODE=write
 PRICEVISION_EVIDENCE_PERSISTENCE_WRITE_CONFIRM=YES_I_UNDERSTAND_THIS_WRITES_EVIDENCE
+PRICEVISION_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM=YES_I_UNDERSTAND_THIS_INSERTS_ONE_TEST_ROW
 ```
 
 Until the review flow and storage policies are confirmed, keep:
 
 ```bash
 PRICEVISION_EVIDENCE_PERSISTENCE_MODE=dry_run
+PRICEVISION_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM=
 ```
+
+## Readiness check
+
+After setting server-only Supabase env values locally, run:
+
+```bash
+npm run check:evidence-readiness
+```
+
+This performs schema probes only. It does not insert, update, or delete data. The check calls `select(...).limit(0)` on `competitor_shelf_items` and `price_capture_runs` to confirm that the evidence columns expected by the pipeline are visible to the configured Supabase client.
 
 ## Current production schema observation
 
-`public.competitor_shelf_items` exists and RLS is enabled. The connected production schema currently has only the older competitor shelf fields and does not yet include the local evidence fields expected by the current PriceVision pipeline, including `bbox`, `crop_storage_path`, `crop_width`, `crop_height`, detector/OCR fields, `parsed_price_confidence`, `normalized_product_text`, review fields, AI telemetry fields, and `processing_run_id`.
+`public.competitor_shelf_items` exists and RLS is enabled. On 2026-07-10, additive production migrations were applied for the local evidence fields and `price_capture_runs`.
 
-Do not enable real evidence writes until the DB migration state is aligned.
+Do not enable real evidence writes until the live readiness check passes and one controlled test row is explicitly approved.
 
 ## Security findings from Supabase advisors
 
 These findings were observed through Supabase security advisors and should be handled in a separate migration/security PR.
 
-### Critical / error
+### Golden dataset status
 
-1. `public.golden_dataset_samples` has RLS disabled.
-2. `public.golden_dataset_samples` is exposed via API and contains a potentially sensitive column: `session_id`.
-
-Do not auto-apply RLS blindly. Enabling RLS without policies may block legitimate app access. The minimal remediation starts with:
-
-```sql
-ALTER TABLE public.golden_dataset_samples ENABLE ROW LEVEL SECURITY;
-```
-
-Then add company-scoped policies before relying on the table from the app.
+`public.golden_dataset_samples` is not used by the current MVP flow. It was empty when checked on 2026-07-10, and RLS has been enabled without policies to lock the unused table down. Supabase now reports this as informational `RLS Enabled No Policy`, which is expected for an intentionally inaccessible unused table.
 
 ### Warnings
 
@@ -85,15 +88,16 @@ Then add company-scoped policies before relying on the table from the app.
    - `public.set_recognized_item_department_from_photo()`
 3. Auth leaked-password protection is disabled.
 
-These are not fixed by this PR.
+These warnings are not fixed by this PR.
 
 ## Integration rule
 
 The code may construct a Supabase client boundary, but production writes remain disconnected from routes until all of the following are true:
 
-1. Required evidence columns exist in production.
+1. Required evidence columns exist in production and the live readiness check passes.
 2. RLS policies for `competitor_shelf_items` are verified.
 3. Storage bucket and object policies for source photos/crops are verified.
-4. `golden_dataset_samples` RLS issue is handled or formally accepted.
+4. `golden_dataset_samples` remains locked down or gets formal company-scoped policies before use.
 5. Evidence write mode is explicitly enabled by env.
-6. A small admin-only write path is reviewed separately.
+6. Controlled single-row insert approval env is explicitly enabled.
+7. A small admin-only write path is reviewed separately.

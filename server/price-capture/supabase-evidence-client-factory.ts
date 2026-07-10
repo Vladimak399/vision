@@ -1,6 +1,13 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import type { SupabaseEvidenceClient } from "./supabase-evidence-repository";
+import {
+  SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_ENV,
+  SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_VALUE,
+  SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV,
+  SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE,
+  SUPABASE_EVIDENCE_WRITE_MODE_ENV,
+} from "./supabase-evidence-repository";
 
 export const SUPABASE_PROJECT_REF = "ncefnrodgzhwwxzogbur" as const;
 export const SUPABASE_PROJECT_URL = "https://ncefnrodgzhwwxzogbur.supabase.co" as const;
@@ -91,8 +98,9 @@ export function buildSupabaseEvidenceClientEnvChecklist(): string[] {
     `${SUPABASE_EVIDENCE_URL_ENV}=${SUPABASE_PROJECT_URL}`,
     `${SUPABASE_EVIDENCE_PUBLISHABLE_KEY_ENV}=<paste sb_publishable_... key from Supabase project API settings>`,
     `${SUPABASE_EVIDENCE_SERVICE_ROLE_KEY_ENV}=<paste service_role key only on server/runtime that performs writes>`,
-    "PRICEVISION_EVIDENCE_PERSISTENCE_MODE=dry_run",
-    "PRICEVISION_EVIDENCE_PERSISTENCE_WRITE_CONFIRM=<leave unset until explicit production write approval>",
+    `${SUPABASE_EVIDENCE_WRITE_MODE_ENV}=dry_run`,
+    `${SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV}=<leave unset until explicit production write approval; then ${SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE}>`,
+    `${SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_ENV}=<leave unset until one-row insert approval; then ${SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_VALUE}>`,
   ];
 }
 

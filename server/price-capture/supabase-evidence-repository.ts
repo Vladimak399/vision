@@ -8,10 +8,13 @@ import type { EvidenceWriter, EvidenceWriterInput, EvidenceWriteResult } from ".
 export const SUPABASE_EVIDENCE_WRITE_MODE_ENV = "PRICEVISION_EVIDENCE_PERSISTENCE_MODE" as const;
 export const SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV = "PRICEVISION_EVIDENCE_PERSISTENCE_WRITE_CONFIRM" as const;
 export const SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE = "YES_I_UNDERSTAND_THIS_WRITES_EVIDENCE" as const;
+export const SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_ENV = "PRICEVISION_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM" as const;
+export const SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_VALUE = "YES_I_UNDERSTAND_THIS_INSERTS_ONE_TEST_ROW" as const;
 
 export type SupabaseEvidenceWriteGuardReason =
   | "mode_not_write"
   | "missing_write_confirmation"
+  | "missing_controlled_test_row_confirmation"
   | "write_enabled";
 
 export type SupabaseEvidenceWriteGuard =
@@ -21,6 +24,7 @@ export type SupabaseEvidenceWriteGuard =
       message: string;
       mode: string | null;
       confirmationPresent: boolean;
+      controlledTestRowConfirmationPresent: boolean;
     }
   | {
       writeEnabled: true;
@@ -28,6 +32,7 @@ export type SupabaseEvidenceWriteGuard =
       message: string;
       mode: "write";
       confirmationPresent: true;
+      controlledTestRowConfirmationPresent: true;
     };
 
 export type SupabaseEvidenceInsertResult = {
@@ -66,7 +71,9 @@ export function resolveSupabaseEvidenceWriteGuard(
 ): SupabaseEvidenceWriteGuard {
   const mode = normalizeEnv(env?.[SUPABASE_EVIDENCE_WRITE_MODE_ENV]);
   const confirmation = normalizeEnv(env?.[SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV]);
+  const controlledTestRowConfirmation = normalizeEnv(env?.[SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_ENV]);
   const confirmationPresent = confirmation === SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE;
+  const controlledTestRowConfirmationPresent = controlledTestRowConfirmation === SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_VALUE;
 
   if (mode !== "write") {
     return {
@@ -75,6 +82,7 @@ export function resolveSupabaseEvidenceWriteGuard(
       message: `${SUPABASE_EVIDENCE_WRITE_MODE_ENV}=write is required before competitor shelf item evidence can be inserted.`,
       mode,
       confirmationPresent,
+      controlledTestRowConfirmationPresent,
     };
   }
 
@@ -85,15 +93,28 @@ export function resolveSupabaseEvidenceWriteGuard(
       message: `${SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV}=${SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE} is required before competitor shelf item evidence can be inserted.`,
       mode,
       confirmationPresent: false,
+      controlledTestRowConfirmationPresent,
+    };
+  }
+
+  if (!controlledTestRowConfirmationPresent) {
+    return {
+      writeEnabled: false,
+      reason: "missing_controlled_test_row_confirmation",
+      message: `${SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_ENV}=${SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_VALUE} is required before inserting the first controlled evidence test row.`,
+      mode,
+      confirmationPresent: true,
+      controlledTestRowConfirmationPresent: false,
     };
   }
 
   return {
     writeEnabled: true,
     reason: "write_enabled",
-    message: "Supabase evidence writes are explicitly enabled for this process.",
+    message: "Supabase evidence writes are explicitly enabled for this controlled test-row process.",
     mode: "write",
     confirmationPresent: true,
+    controlledTestRowConfirmationPresent: true,
   };
 }
 
