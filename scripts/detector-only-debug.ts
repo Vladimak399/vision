@@ -8,10 +8,12 @@ import type { EvidenceDraft, PriceCaptureRunContext } from "../server/price-capt
 import { createExternalOcrWorkerEngine, createMockExternalOcrWorkerClient } from "../server/price-capture/external-ocr-worker";
 import { createUnsupportedLocalOcrEngine, type LocalOcrEngine } from "../server/price-capture/local-ocr";
 import { createRussianPriceParser } from "../server/price-capture/local-price-parser";
-import type { PriceParserResult, PriceTagDetection } from "../server/price-capture/local-pipeline";
+import { createLocalProductTextExtractor } from "../server/price-capture/local-product-text-extractor";
+import type { PriceParserResult, PriceTagDetection, ProductTextExtractorResult } from "../server/price-capture/local-pipeline";
 import { mergeLocalOcrRunIntoEvidenceDrafts, type OcrEvidenceMergeMetrics } from "../server/price-capture/ocr-evidence";
 import { runLocalOcrForDraftItems, type LocalOcrDraftRunResult } from "../server/price-capture/ocr-crop";
 import { mergeParsedPricesIntoEvidenceDrafts, type ParsedPriceEvidenceMergeMetrics } from "../server/price-capture/price-evidence";
+import { mergeProductTextsIntoEvidenceDrafts, type ProductTextEvidenceMergeMetrics } from "../server/price-capture/product-text-evidence";
 
 export type DetectorOnlyDebugOcrMode = "unsupported-noop" | "mock-worker";
 
@@ -30,6 +32,7 @@ export type DetectorOnlyDebugCliOptions = {
   mockOcrText: string | null;
   mockOcrConfidence: number | null;
   parsePrice: boolean;
+  extractProductText: boolean;
   pretty: boolean;
 };
 
@@ -56,12 +59,23 @@ export type DetectorOnlyDebugPriceSection = {
   }>;
 };
 
+export type DetectorOnlyDebugProductTextSection = {
+  extractor: "ru-product-text-extractor-heuristic-v1";
+  metrics: ProductTextEvidenceMergeMetrics;
+  extracted: Array<{
+    itemId: string;
+    rawName: string | null;
+    normalizedProductText: string | null;
+  }>;
+};
+
 export type DetectorOnlyDebugOcrResponse = {
   ok: true;
   statusCode: 200;
   report: DetectorOnlyRunReportDto;
   ocr: DetectorOnlyDebugOcrSection;
   price?: DetectorOnlyDebugPriceSection;
+  productText?: DetectorOnlyDebugProductTextSection;
 };
 
 export type DetectorOnlyDebugResponse = DetectorOnlyApiResponse | DetectorOnlyDebugOcrResponse;
@@ -119,12 +133,20 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
   }
 
   const mockOcrText = stringFlag(flags, "--mock-ocr-text");
-  const parsePrice = flags.has("--parse-price") || flags.has("--with-price") || flags.has("--price");
+  const extractProductText = flags.has("--extract-product-text")
+    || flags.has("--with-product-text")
+    || flags.has("--product-text")
+    || flags.has("--product");
+  const parsePrice = flags.has("--parse-price")
+    || flags.has("--with-price")
+    || flags.has("--price")
+    || extractProductText;
   const withOcr = flags.has("--with-ocr")
     || flags.has("--ocr")
     || ocrMode === "mock-worker"
     || Boolean(mockOcrText)
-    || parsePrice;
+    || parsePrice
+    || extractProductText;
 
   return {
     ok: true,
@@ -143,6 +165,7 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
       mockOcrText,
       mockOcrConfidence: mockOcrConfidence === null ? null : mockOcrConfidence,
       parsePrice,
+      extractProductText,
       pretty: !flags.has("--compact"),
     },
   };
@@ -215,9 +238,11 @@ async function runDetectorOnlyDebugWithOcr(
 
   let drafts = ocrMerged.drafts;
   let price: DetectorOnlyDebugPriceSection | undefined;
+  let productText: DetectorOnlyDebugProductTextSection | undefined;
+  let parsedItems: Array<{ itemId: string; parsedPrice: PriceParserResult | null }> = [];
 
-  if (options.parsePrice) {
-    const parsedItems = await parsePricesForOcrRun(processingResult.run, ocrRun);
+  if (options.parsePrice || options.extractProductText) {
+    parsedItems = await parsePricesForOcrRun(processingResult.run, ocrRun);
     const priceMerged = mergeParsedPricesIntoEvidenceDrafts({
       drafts,
       parsedItems,
@@ -237,6 +262,24 @@ async function runDetectorOnlyDebugWithOcr(
     };
   }
 
+  if (options.extractProductText) {
+    const productTextItems = await extractProductTextsForOcrRun(processingResult.run, ocrRun, parsedItems);
+    const productTextMerged = mergeProductTextsIntoEvidenceDrafts({
+      drafts,
+      productTextItems,
+    });
+    drafts = productTextMerged.drafts;
+    productText = {
+      extractor: "ru-product-text-extractor-heuristic-v1",
+      metrics: productTextMerged.metrics,
+      extracted: productTextItems.map((item) => ({
+        itemId: item.itemId,
+        rawName: item.productText?.rawName ?? null,
+        normalizedProductText: item.productText?.normalizedProductText ?? null,
+      })),
+    };
+  }
+
   const result = withMergedDrafts(processingResult, drafts);
 
   return {
@@ -249,6 +292,7 @@ async function runDetectorOnlyDebugWithOcr(
       skipped: ocrRun.skipped,
     },
     ...(price ? { price } : {}),
+    ...(productText ? { productText } : {}),
   };
 }
 
@@ -272,6 +316,31 @@ async function parsePricesForOcrRun(
   }
 
   return parsed;
+}
+
+async function extractProductTextsForOcrRun(
+  run: PriceCaptureRunContext,
+  ocrRun: LocalOcrDraftRunResult,
+  parsedItems: Array<{ itemId: string; parsedPrice: PriceParserResult | null }>,
+): Promise<Array<{ itemId: string; productText: ProductTextExtractorResult }>> {
+  const extractor = createLocalProductTextExtractor();
+  const parsedByItemId = new Map(parsedItems.map((item) => [item.itemId, item.parsedPrice]));
+  const extracted: Array<{ itemId: string; productText: ProductTextExtractorResult }> = [];
+
+  for (const item of ocrRun.items) {
+    const productText = await extractor.extract({
+      run,
+      detection: item.detection,
+      ocr: item.ocr,
+      parsedPrice: parsedByItemId.get(item.itemId) ?? null,
+    });
+    extracted.push({
+      itemId: item.itemId,
+      productText,
+    });
+  }
+
+  return extracted;
 }
 
 function createDebugOcrEngine(options: DetectorOnlyDebugCliOptions): LocalOcrEngine {
@@ -405,6 +474,7 @@ function usage(reason: string): string {
     "  --mock-ocr-text <text>        Text returned by mock-worker OCR mode",
     "  --mock-ocr-confidence <0..1>  Confidence returned by mock-worker OCR mode",
     "  --parse-price                 Parse price from OCR text and include price section",
+    "  --extract-product-text        Extract product text from OCR text and include productText section",
     "  --compact                     Print compact JSON",
   ].join("\n");
 }
