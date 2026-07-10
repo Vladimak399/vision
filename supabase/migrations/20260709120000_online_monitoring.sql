@@ -182,19 +182,19 @@ alter table public.online_source_products
 alter table public.online_product_matches
   add column if not exists updated_at timestamptz not null default now();
 
-create trigger if not exists online_sources_touch
+create trigger online_sources_touch
   before update on public.online_sources
   for each row execute function public.touch_updated_at();
-create trigger if not exists online_source_stores_touch
+create trigger online_source_stores_touch
   before update on public.online_source_stores
   for each row execute function public.touch_updated_at();
-create trigger if not exists online_source_runs_touch
+create trigger online_source_runs_touch
   before update on public.online_source_runs
   for each row execute function public.touch_updated_at();
-create trigger if not exists online_source_products_touch
+create trigger online_source_products_touch
   before update on public.online_source_products
-  for each row execute function public.touch_updated_at());
-create trigger if not exists online_product_matches_touch
+  for each row execute function public.touch_updated_at();
+create trigger online_product_matches_touch
   before update on public.online_product_matches
   for each row execute function public.touch_updated_at();
 
@@ -207,13 +207,13 @@ alter table public.online_source_products enable row level security;
 alter table public.online_product_matches enable row level security;
 alter table public.online_prices enable row level security;
 
-create policy if not exists online_sources_company_select
+create policy online_sources_company_select
   on public.online_sources for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_sources_company_modify
+create policy online_sources_company_modify
   on public.online_sources for all
   using (company_id in (
     select cm.company_id from public.company_members cm
@@ -224,13 +224,13 @@ create policy if not exists online_sources_company_modify
     where cm.user_id = auth.uid()
   ));
 
-create policy if not exists online_source_stores_company_select
+create policy online_source_stores_company_select
   on public.online_source_stores for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_source_stores_company_modify
+create policy online_source_stores_company_modify
   on public.online_source_stores for all
   using (company_id in (
     select cm.company_id from public.company_members cm
@@ -241,13 +241,13 @@ create policy if not exists online_source_stores_company_modify
     where cm.user_id = auth.uid()
   ));
 
-create policy if not exists online_source_runs_company_select
+create policy online_source_runs_company_select
   on public.online_source_runs for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_source_runs_company_modify
+create policy online_source_runs_company_modify
   on public.online_source_runs for all
   using (company_id in (
     select cm.company_id from public.company_members cm
@@ -258,13 +258,13 @@ create policy if not exists online_source_runs_company_modify
     where cm.user_id = auth.uid()
   ));
 
-create policy if not exists online_source_run_events_company_select
+create policy online_source_run_events_company_select
   on public.online_source_run_events for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_source_run_events_company_modify
+create policy online_source_run_events_company_modify
   on public.online_source_run_events for all
   using (company_id in (
     select cm.company_id from public.company_members cm
@@ -275,13 +275,13 @@ create policy if not exists online_source_run_events_company_modify
     where cm.user_id = auth.uid()
   ));
 
-create policy if not exists online_source_products_company_select
+create policy online_source_products_company_select
   on public.online_source_products for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_source_products_company_modify
+create policy online_source_products_company_modify
   on public.online_source_products for all
   using (company_id in (
     select cm.company_id from public.company_members cm
@@ -292,13 +292,13 @@ create policy if not exists online_source_products_company_modify
     where cm.user_id = auth.uid()
   ));
 
-create policy if not exists online_product_matches_company_select
+create policy online_product_matches_company_select
   on public.online_product_matches for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_product_matches_company_modify
+create policy online_product_matches_company_modify
   on public.online_product_matches for all
   using (company_id in (
     select cm.company_id from public.company_members cm
@@ -309,13 +309,13 @@ create policy if not exists online_product_matches_company_modify
     where cm.user_id = auth.uid()
   ));
 
-create policy if not exists online_prices_company_select
+create policy online_prices_company_select
   on public.online_prices for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_prices_company_modify
+create policy online_prices_company_modify
   on public.online_prices for all
   using (company_id in (
     select cm.company_id from public.company_members cm

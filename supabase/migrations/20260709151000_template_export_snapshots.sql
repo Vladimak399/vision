@@ -1,9 +1,9 @@
 -- TASK-36: Template export snapshots
 -- Stores snapshots of exported Excel files with metadata about which prices were used
 
-CREATE TABLE IF NOT EXISTS template_export_snapshots (
+CREATE TABLE IF NOT EXISTS public.template_export_snapshots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  company_id UUID NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
   week INTEGER NOT NULL CHECK (week IN (1, 2)),
 
   -- Original file info
@@ -32,42 +32,40 @@ CREATE TABLE IF NOT EXISTS template_export_snapshots (
   warnings TEXT[] DEFAULT '{}',
 
   -- User who triggered export (optional, for audit trail)
-  triggered_by UUID REFERENCES auth.users(id),
-
-  -- Indexes for fast lookup
-  INDEX idx_snapshots_company_week (company_id, week),
-  INDEX idx_snapshots_snapshot_id (snapshot_id),
-  INDEX idx_snapshots_created_at (snapshot_created_at DESC)
+  triggered_by UUID REFERENCES auth.users(id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_snapshots_company_week
+  ON public.template_export_snapshots(company_id, week);
+CREATE INDEX IF NOT EXISTS idx_snapshots_snapshot_id
+  ON public.template_export_snapshots(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at
+  ON public.template_export_snapshots(snapshot_created_at DESC);
+
 -- RLS
-ALTER TABLE template_export_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.template_export_snapshots ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view their company's snapshots"
-  ON template_export_snapshots
+  ON public.template_export_snapshots
   FOR SELECT
   USING (
     company_id IN (
-      SELECT id FROM companies
-      WHERE id IN (
-        SELECT company_id FROM company_memberships
-        WHERE user_id = auth.uid()
-      )
+      SELECT cm.company_id
+      FROM public.company_members cm
+      WHERE cm.user_id = auth.uid()
     )
   );
 
 CREATE POLICY "Users can create snapshots for their company"
-  ON template_export_snapshots
+  ON public.template_export_snapshots
   FOR INSERT
   WITH CHECK (
     company_id IN (
-      SELECT id FROM companies
-      WHERE id IN (
-        SELECT company_id FROM company_memberships
-        WHERE user_id = auth.uid()
-      )
+      SELECT cm.company_id
+      FROM public.company_members cm
+      WHERE cm.user_id = auth.uid()
     )
   );
 
 -- Comment
-COMMENT ON TABLE template_export_snapshots IS 'Snapshot of template export with price data for audit trail (TASK-36)';
+COMMENT ON TABLE public.template_export_snapshots IS 'Snapshot of template export with price data for audit trail (TASK-36)';

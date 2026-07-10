@@ -1,6 +1,14 @@
 -- Add golden dataset support fields to recognized_items
 -- This enables collecting labeled data for training and evaluation
 
+-- Add verification status enum before tables reference it.
+do $$
+begin
+  create type public.verification_status as enum ('pending', 'verified', 'rejected');
+exception
+  when duplicate_object then null;
+end $$;
+
 alter table public.recognized_items
 add column if not exists is_golden boolean default false,
 add column if not exists golden_confidence_score numeric(5,4),
@@ -39,9 +47,6 @@ create table if not exists public.golden_dataset_samples (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
--- Add verification status enum
-create type if not exists public.verification_status as enum ('pending', 'verified', 'rejected');
 
 -- Create unique index for golden samples to prevent duplicates
 create unique index if not exists golden_samples_unique on public.golden_dataset_samples(
