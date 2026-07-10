@@ -128,7 +128,7 @@ test("builds evidence drafts from detector run detections", () => {
       detection("tag-2", { x: 80, y: 20, width: 50, height: 22 }, 1.4),
     ],
   }), {
-    cropPadding: { x: 2, y: 3 },
+    cropPadding: { pixels: 3 },
     cropExtension: "webp",
   });
 
@@ -154,10 +154,9 @@ test("builds evidence drafts from detector run detections", () => {
   assert.equal(first.row.ai_used, false);
   assert.equal(first.row.photo_storage_path, "photos/shelf.jpg");
   assert.equal(first.row.photo_filename, "shelf.jpg");
-  assert.equal(first.row.crop_width, 44);
+  assert.equal(first.row.crop_width, 46);
   assert.equal(first.row.crop_height, 24);
-  assert.match(first.row.crop_storage_path, /price-capture-evidence\/company-1\/run-1\/det-tag-1\//);
-  assert.match(first.row.crop_storage_path, /\.webp$/);
+  assert.equal(first.row.crop_storage_path, "evidence/company-1/runs/run-1/crops/det-tag-1.webp");
 
   assert.equal(result.drafts[1].row.detector_confidence, 1);
 });
@@ -212,5 +211,5 @@ test("sanitizes unsafe detection ids before using them in evidence crop paths", 
   assert.equal(result.drafts.length, 1);
   assert.equal(result.drafts[0].itemId, "price-tag-bad-tag");
   assert.doesNotMatch(result.drafts[0].row.crop_storage_path, /\.\./);
-  assert.match(result.drafts[0].row.crop_storage_path, /price-tag-bad-tag/);
+  assert.equal(result.drafts[0].row.crop_storage_path, "evidence/company-1/runs/run-1/crops/price-tag-bad-tag.jpg");
 });
