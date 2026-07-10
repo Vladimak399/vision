@@ -34,10 +34,17 @@ export type DetectorOnlyRunReportPriceSummaryDto = {
   promoPriceCount: number;
 };
 
+export type DetectorOnlyRunReportProductTextSummaryDto = {
+  namedCount: number;
+  normalizedCount: number;
+  unknownCount: number;
+};
+
 export type DetectorOnlyRunReportSummaryDto = DetectorOnlyProcessingSummary & {
   statusReason: "ok" | "decode_failed" | "partial_invalid_crops" | "no_detections";
   ocr: DetectorOnlyRunReportOcrSummaryDto;
   price: DetectorOnlyRunReportPriceSummaryDto;
+  productText: DetectorOnlyRunReportProductTextSummaryDto;
 };
 
 export type DetectorOnlyRunReportDetectionDto = {
@@ -81,6 +88,9 @@ export type DetectorOnlyRunReportDraftDto = {
   product: {
     rawName: string;
     normalizedProductText: string | null;
+    productVisibleText: string | null;
+    brand: string | null;
+    sizeText: string | null;
     priceMinor: number | null;
     oldPriceMinor: number | null;
     promoPriceMinor: number | null;
@@ -123,6 +133,7 @@ export function buildDetectorOnlyRunReport(result: DetectorOnlyProcessingResult)
       statusReason: resolveStatusReason(result),
       ocr: buildOcrSummary(result.drafts),
       price: buildPriceSummary(result.drafts),
+      productText: buildProductTextSummary(result.drafts),
     },
     detections: result.detectorRun.detections.map((detection, index) => ({
       index,
@@ -157,6 +168,9 @@ export function buildDetectorOnlyRunReport(result: DetectorOnlyProcessingResult)
       product: {
         rawName: draft.row.raw_name,
         normalizedProductText: draft.row.normalized_product_text,
+        productVisibleText: draft.row.product_visible_text,
+        brand: draft.row.brand,
+        sizeText: draft.row.size_text,
         priceMinor: draft.row.price_minor,
         oldPriceMinor: draft.row.old_price_minor,
         promoPriceMinor: draft.row.promo_price_minor,
@@ -222,6 +236,17 @@ function buildPriceSummary(drafts: DetectorOnlyProcessingResult["drafts"]): Dete
   };
 }
 
+function buildProductTextSummary(drafts: DetectorOnlyProcessingResult["drafts"]): DetectorOnlyRunReportProductTextSummaryDto {
+  const namedCount = drafts.filter((draft) => !isUnknownRawName(draft.row.raw_name)).length;
+  const normalizedCount = drafts.filter((draft) => Boolean(emptyToNull(draft.row.normalized_product_text))).length;
+
+  return {
+    namedCount,
+    normalizedCount,
+    unknownCount: Math.max(0, drafts.length - namedCount),
+  };
+}
+
 function hasOcrEvidence(row: DetectorOnlyProcessingResult["drafts"][number]["row"]): boolean {
   return Boolean(
     emptyToNull(row.ocr_provider)
@@ -229,6 +254,11 @@ function hasOcrEvidence(row: DetectorOnlyProcessingResult["drafts"][number]["row
     || emptyToNull(row.ocr_text)
     || hasNumericConfidence(row.ocr_confidence),
   );
+}
+
+function isUnknownRawName(value: string | null | undefined): boolean {
+  const normalized = emptyToNull(value)?.toLowerCase();
+  return !normalized || normalized === "unknown";
 }
 
 function hasNumericConfidence(value?: number | null): boolean {
