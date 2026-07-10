@@ -40,7 +40,19 @@ export async function POST(request: Request) {
 
   let body: DetectorOnlyRouteBody;
   try {
-    body = await request.json();
+    const parsedBody = await request.json();
+    if (!isDetectorOnlyRouteBody(parsedBody)) {
+      return NextResponse.json({
+        ok: false,
+        statusCode: 400,
+        error: {
+          code: "invalid_json",
+          message: "Request body must be a JSON object.",
+        },
+      }, { status: 400 });
+    }
+
+    body = parsedBody;
   } catch {
     return NextResponse.json({
       ok: false,
@@ -65,6 +77,10 @@ export function isDetectorOnlyApiRouteEnabled(
   value: string | undefined = process.env[DETECTOR_ONLY_API_ROUTE_FEATURE_FLAG],
 ): boolean {
   return value === "1" || value?.toLowerCase() === "true";
+}
+
+export function isDetectorOnlyRouteBody(value: unknown): value is DetectorOnlyRouteBody {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function buildDetectorOnlyApiRequestFromRouteBody(

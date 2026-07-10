@@ -37,6 +37,7 @@ const {
   DETECTOR_ONLY_API_ROUTE_FEATURE_FLAG,
   buildDetectorOnlyApiRequestFromRouteBody,
   isDetectorOnlyApiRouteEnabled,
+  isDetectorOnlyRouteBody,
 } = require("../.tmp/detector-only-api-route-test/app/app/price-capture/api/detector-only/route.js");
 
 after(() => {
@@ -50,6 +51,15 @@ test("exposes detector-only API route feature flag", () => {
   assert.equal(isDetectorOnlyApiRouteEnabled("TRUE"), true);
   assert.equal(isDetectorOnlyApiRouteEnabled("0"), false);
   assert.equal(isDetectorOnlyApiRouteEnabled(undefined), false);
+});
+
+test("accepts only JSON object route bodies", () => {
+  assert.equal(isDetectorOnlyRouteBody({}), true);
+  assert.equal(isDetectorOnlyRouteBody({ storeId: "store-1" }), true);
+  assert.equal(isDetectorOnlyRouteBody(null), false);
+  assert.equal(isDetectorOnlyRouteBody(undefined), false);
+  assert.equal(isDetectorOnlyRouteBody([]), false);
+  assert.equal(isDetectorOnlyRouteBody("{}"), false);
 });
 
 test("maps route JSON body into detector-only API boundary request", () => {
