@@ -38,9 +38,11 @@ export class SharpImageDecoder implements ImageDecoder {
   private readonly options: Required<Omit<SharpImageDecoderOptions, "limitInputPixels">> & Pick<SharpImageDecoderOptions, "limitInputPixels">;
 
   constructor(options: SharpImageDecoderOptions = {}) {
+    const normalized = normalizeOptions(options);
     this.options = {
-      ...DEFAULT_OPTIONS,
-      ...normalizeOptions(options),
+      pixelFormat: normalized.pixelFormat ?? DEFAULT_OPTIONS.pixelFormat,
+      autoOrient: normalized.autoOrient ?? DEFAULT_OPTIONS.autoOrient,
+      limitInputPixels: normalized.limitInputPixels ?? DEFAULT_OPTIONS.limitInputPixels,
     };
   }
 
