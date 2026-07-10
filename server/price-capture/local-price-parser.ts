@@ -53,7 +53,7 @@ const DEFAULT_MIN_RUB = 1;
 const DEFAULT_MAX_RUB = 999_999;
 const DEFAULT_CURRENCY = "RUB";
 
-const PRICE_RE = /(?<!\d)(\d{1,3}(?:[\s\u00A0]\d{3})+|\d{1,6})(?:\s*(?:[,.:-]|руб\.?|р\.?|₽)\s*(\d{1,2}))?(?!\d)/giu;
+const PRICE_RE = /(?<!\d)(\d{1,3}(?:[\s\u00A0]\d{3})+|\d{1,6})(?:\s*(?:[,.:-]|руб\.?|р\.?|₽)?\s*(\d{1,2}))?(?!\d)/giu;
 const NON_PRICE_AFTER_RE = /^\s*(?:%|проц|г\b|гр\b|кг\b|мл\b|л\b|шт\b|pcs\b)/iu;
 const OLD_PRICE_RE = /(старая|стар\.?|было|обычная|обычн\.?|зачерк|перечерк)/iu;
 const PROMO_PRICE_RE = /(новая|нов\.?|акц|акция|скид|скидка|спец|sale|promo|промо)/iu;
