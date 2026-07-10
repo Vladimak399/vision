@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -111,6 +111,14 @@ function createMatch() {
   };
 }
 
+function createWriteEnv(repository) {
+  return {
+    [repository.SUPABASE_EVIDENCE_WRITE_MODE_ENV]: "write",
+    [repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV]: repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE,
+    [repository.SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_ENV]: repository.SUPABASE_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM_VALUE,
+  };
+}
+
 function createFakeClient(response = { data: { id: "row-1" }, error: null }) {
   const calls = {
     from: [],
@@ -152,6 +160,7 @@ test("resolveSupabaseEvidenceWriteGuard keeps writes disabled by default", async
   assert.equal(guard.writeEnabled, false);
   assert.equal(guard.reason, "mode_not_write");
   assert.equal(guard.confirmationPresent, false);
+  assert.equal(guard.controlledTestRowConfirmationPresent, false);
 });
 
 test("resolveSupabaseEvidenceWriteGuard requires explicit confirmation after write mode", async () => {
@@ -164,15 +173,26 @@ test("resolveSupabaseEvidenceWriteGuard requires explicit confirmation after wri
   assert.equal(guard.reason, "missing_write_confirmation");
 });
 
-test("resolveSupabaseEvidenceWriteGuard enables writes only with both env values", async () => {
+test("resolveSupabaseEvidenceWriteGuard requires controlled test row confirmation after write confirmation", async () => {
   const { repository } = await loadModules();
   const guard = repository.resolveSupabaseEvidenceWriteGuard({
     [repository.SUPABASE_EVIDENCE_WRITE_MODE_ENV]: "write",
     [repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV]: repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE,
   });
 
+  assert.equal(guard.writeEnabled, false);
+  assert.equal(guard.reason, "missing_controlled_test_row_confirmation");
+  assert.equal(guard.confirmationPresent, true);
+  assert.equal(guard.controlledTestRowConfirmationPresent, false);
+});
+
+test("resolveSupabaseEvidenceWriteGuard enables writes only with all three env values", async () => {
+  const { repository } = await loadModules();
+  const guard = repository.resolveSupabaseEvidenceWriteGuard(createWriteEnv(repository));
+
   assert.equal(guard.writeEnabled, true);
   assert.equal(guard.reason, "write_enabled");
+  assert.equal(guard.controlledTestRowConfirmationPresent, true);
 });
 
 test("SupabaseEvidenceRepository does not call client when guard is disabled", async () => {
@@ -190,7 +210,7 @@ test("SupabaseEvidenceRepository does not call client when guard is disabled", a
   assert.deepEqual(fake.calls.insert, []);
 });
 
-test("SupabaseEvidenceRepository inserts through injected client when guard is enabled", async () => {
+test("SupabaseEvidenceRepository stays disabled when controlled test row guard is missing", async () => {
   const { repository, evidenceContract } = await loadModules();
   const fake = createFakeClient({ data: { id: "row-123" }, error: null });
   const writer = repository.createSupabaseEvidenceRepository({
@@ -199,6 +219,24 @@ test("SupabaseEvidenceRepository inserts through injected client when guard is e
       [repository.SUPABASE_EVIDENCE_WRITE_MODE_ENV]: "write",
       [repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV]: repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE,
     },
+  });
+  const draft = createDraft(evidenceContract.buildCompetitorShelfItemEvidenceDraft);
+
+  const result = await writer.write({ run: createRun(), draft, match: createMatch() });
+
+  assert.equal(result.writeEnabled, false);
+  assert.equal(result.rowId, null);
+  assert.equal(result.guard.reason, "missing_controlled_test_row_confirmation");
+  assert.deepEqual(fake.calls.from, []);
+  assert.deepEqual(fake.calls.insert, []);
+});
+
+test("SupabaseEvidenceRepository inserts through injected client when all guards are enabled", async () => {
+  const { repository, evidenceContract } = await loadModules();
+  const fake = createFakeClient({ data: { id: "row-123" }, error: null });
+  const writer = repository.createSupabaseEvidenceRepository({
+    client: fake.client,
+    env: createWriteEnv(repository),
     matchedAt: "2026-07-10T12:00:00.000Z",
   });
   const draft = createDraft(evidenceContract.buildCompetitorShelfItemEvidenceDraft);
@@ -220,10 +258,7 @@ test("SupabaseEvidenceRepository surfaces injected client errors", async () => {
   const fake = createFakeClient({ data: null, error: { message: "insert blocked" } });
   const writer = repository.createSupabaseEvidenceRepository({
     client: fake.client,
-    env: {
-      [repository.SUPABASE_EVIDENCE_WRITE_MODE_ENV]: "write",
-      [repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_ENV]: repository.SUPABASE_EVIDENCE_WRITE_CONFIRM_VALUE,
-    },
+    env: createWriteEnv(repository),
   });
   const draft = createDraft(evidenceContract.buildCompetitorShelfItemEvidenceDraft);
 
