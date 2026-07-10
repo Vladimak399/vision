@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""RapidOCR HTTP worker skeleton for PriceVision.
+"""RapidOCR HTTP worker for PriceVision.
 
-This worker is intentionally outside the Next.js runtime. It uses only Python
-stdlib for HTTP serving and lazy-imports RapidOCR so the repository can keep this
-file without committing Python dependencies, model weights, or lockfiles.
+This worker is intentionally outside the Next.js runtime. It accepts the
+PriceVision OCR protocol, decodes raw RGB/RGBA/grayscale crop bytes, converts the
+crop into a normal RGB PNG image, and sends a RapidOCR-compatible input to the
+local RapidOCR engine.
 
 Local install, outside the web app runtime:
 
@@ -12,18 +13,23 @@ Local install, outside the web app runtime:
     pip install rapidocr onnxruntime pillow
     python tools/ocr-worker/rapidocr_worker.py --host 127.0.0.1 --port 8765
 
-Pillow is used only to convert raw crop bytes to an image object/file for
-RapidOCR. The worker still accepts the protocol documented in
-`docs/PV-05-01_RAPIDOCR_WORKER_PROTOCOL.md`.
+For real photo debugging, keep decoded worker inputs:
+
+    python tools/ocr-worker/rapidocr_worker.py \
+      --host 127.0.0.1 \
+      --port 8765 \
+      --debug-dump-dir tmp/real-photo-runs/worker-inputs
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
-import io
 import json
+import os
+import re
 import sys
+import tempfile
 import time
 import traceback
 from dataclasses import dataclass
@@ -44,6 +50,18 @@ class WorkerConfig:
     host: str
     port: int
     enable_rapidocr: bool
+    rapidocr_input_mode: str
+    debug_dump_dir: Optional[str]
+
+
+@dataclass(frozen=True)
+class DecodedWorkerImage:
+    image: Any
+    width: int
+    height: int
+    source_pixel_format: str
+    pil_mode: str
+    raw_byte_length: int
 
 
 def load_engine(enable_rapidocr: bool) -> Any:
@@ -71,7 +89,7 @@ def load_engine(enable_rapidocr: bool) -> Any:
 
 
 class RapidOcrWorkerHandler(BaseHTTPRequestHandler):
-    server_version = "PriceVisionRapidOCRWorker/0.1"
+    server_version = "PriceVisionRapidOCRWorker/0.2"
     config: WorkerConfig
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
@@ -82,16 +100,16 @@ class RapidOcrWorkerHandler(BaseHTTPRequestHandler):
                 "model": MODEL,
                 "rapidocrLoaded": _ENGINE is not None,
                 "rapidocrError": _IMPORT_ERROR,
+                "rapidocrInputMode": self.config.rapidocr_input_mode,
+                "debugDumpDir": self.config.debug_dump_dir,
             })
             return
-
         self.write_json(404, {"ok": False, "error": "not_found"})
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
         if self.path != "/ocr":
             self.write_json(404, {"ok": False, "error": "not_found"})
             return
-
         started = time.monotonic()
         try:
             payload = self.read_json_body()
@@ -173,9 +191,11 @@ def handle_ocr_request(payload: Dict[str, Any], config: WorkerConfig, started: f
             started=started,
         )
 
+    temporary_path: Optional[str] = None
     try:
-        image_input = decode_image_input(image)
-        text, confidence, blocks = run_rapidocr(engine, image_input)
+        decoded = decode_image_input(image)
+        rapidocr_input, input_diagnostics, temporary_path = prepare_rapidocr_input(decoded, config, request_id)
+        text, confidence, blocks, result_diagnostics = run_rapidocr(engine, rapidocr_input)
         return {
             "schemaVersion": RESPONSE_SCHEMA_VERSION,
             "requestId": request_id,
@@ -189,6 +209,15 @@ def handle_ocr_request(payload: Dict[str, Any], config: WorkerConfig, started: f
                 "durationMs": duration_ms(started),
                 "engine": "rapidocr",
                 "blockCount": len(blocks),
+                "decodedImage": {
+                    "width": decoded.width,
+                    "height": decoded.height,
+                    "sourcePixelFormat": decoded.source_pixel_format,
+                    "pilMode": decoded.pil_mode,
+                    "rawByteLength": decoded.raw_byte_length,
+                },
+                **input_diagnostics,
+                **result_diagnostics,
             },
         }
     except Exception as exc:  # pragma: no cover - depends on optional runtime
@@ -197,16 +226,18 @@ def handle_ocr_request(payload: Dict[str, Any], config: WorkerConfig, started: f
             code="ocr_failed",
             message=str(exc),
             started=started,
+            diagnostics={"traceback": traceback.format_exc(limit=8)},
         )
+    finally:
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
 
 
-def decode_image_input(image: Dict[str, Any]) -> Any:
-    """Decode the protocol image payload into a RapidOCR-compatible input.
-
-    The Node side currently sends raw crop bytes with dimensions/pixel format.
-    RapidOCR accepts paths, arrays, and image-like inputs depending on version.
-    This skeleton uses Pillow when available to convert raw bytes to an RGB image.
-    """
+def decode_image_input(image: Dict[str, Any]) -> DecodedWorkerImage:
+    """Decode protocol image payload into a normal RGB Pillow image."""
     bytes_base64 = image.get("bytesBase64")
     width = image.get("width")
     height = image.get("height")
@@ -222,20 +253,79 @@ def decode_image_input(image: Dict[str, Any]) -> Any:
         raise ValueError("image.pixelFormat must be grayscale, rgb, or rgba.")
 
     raw = base64.b64decode(bytes_base64)
+    expected_lengths = {
+        "grayscale": width * height,
+        "rgb": width * height * 3,
+        "rgba": width * height * 4,
+    }
+    expected_length = expected_lengths[pixel_format]
+    if len(raw) != expected_length:
+        raise ValueError(f"image raw byte length {len(raw)} does not match expected {expected_length} for {pixel_format}.")
+
     mode = {"grayscale": "L", "rgb": "RGB", "rgba": "RGBA"}[pixel_format]
 
     try:
         from PIL import Image  # type: ignore
     except Exception as exc:  # pragma: no cover - optional runtime
-        raise RuntimeError("Pillow is required by the skeleton worker to decode raw crop bytes.") from exc
+        raise RuntimeError("Pillow is required by the worker to decode raw crop bytes.") from exc
 
     image_obj = Image.frombytes(mode, (width, height), raw)
-    if mode != "RGB":
+    if image_obj.mode != "RGB":
         image_obj = image_obj.convert("RGB")
-    return image_obj
+
+    return DecodedWorkerImage(
+        image=image_obj,
+        width=width,
+        height=height,
+        source_pixel_format=str(pixel_format),
+        pil_mode=image_obj.mode,
+        raw_byte_length=len(raw),
+    )
 
 
-def run_rapidocr(engine: Any, image_input: Any) -> Tuple[str, Optional[float], List[Dict[str, Any]]]:
+def prepare_rapidocr_input(
+    decoded: DecodedWorkerImage,
+    config: WorkerConfig,
+    request_id: Optional[str],
+) -> Tuple[Any, Dict[str, Any], Optional[str]]:
+    """Prepare a RapidOCR-compatible input.
+
+    `path` is the default because it avoids version-specific PIL/ndarray support
+    issues in RapidOCR. The worker still supports `pil` and `numpy` as explicit
+    debug modes.
+    """
+    mode = config.rapidocr_input_mode
+    diagnostics: Dict[str, Any] = {"rapidocrInputMode": mode}
+
+    if config.debug_dump_dir:
+        os.makedirs(config.debug_dump_dir, exist_ok=True)
+        dump_path = os.path.join(config.debug_dump_dir, f"{safe_name(request_id or 'request')}.worker-input.png")
+        decoded.image.save(dump_path, format="PNG")
+        diagnostics["debugDumpPath"] = dump_path
+
+    if mode == "pil":
+        diagnostics["rapidocrInputType"] = "PIL.Image.Image"
+        return decoded.image, diagnostics, None
+
+    if mode == "numpy":
+        try:
+            import numpy as np  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional runtime
+            raise RuntimeError("numpy rapidocr input mode requested, but numpy is unavailable.") from exc
+        diagnostics["rapidocrInputType"] = "numpy.ndarray"
+        return np.array(decoded.image), diagnostics, None
+
+    # Default/recommended mode: write a regular RGB PNG and pass its path.
+    temp = tempfile.NamedTemporaryFile(prefix="pricevision-rapidocr-", suffix=".png", delete=False)
+    temporary_path = temp.name
+    temp.close()
+    decoded.image.save(temporary_path, format="PNG")
+    diagnostics["rapidocrInputType"] = "png_path"
+    diagnostics["temporaryInputPath"] = temporary_path
+    return temporary_path, diagnostics, temporary_path
+
+
+def run_rapidocr(engine: Any, image_input: Any) -> Tuple[str, Optional[float], List[Dict[str, Any]], Dict[str, Any]]:
     result = engine(image_input)
     items = normalize_rapidocr_result(result)
     text_lines = [item["text"] for item in items if item["text"]]
@@ -245,7 +335,11 @@ def run_rapidocr(engine: Any, image_input: Any) -> Tuple[str, Optional[float], L
     if confidences:
         confidence = round(sum(float(value) for value in confidences) / len(confidences), 4)
 
-    return "\n".join(text_lines), confidence, items
+    diagnostics = {
+        "rapidocrResultType": type(result).__name__,
+        "normalizedBlockCount": len(items),
+    }
+    return "\n".join(text_lines), confidence, items, diagnostics
 
 
 def normalize_rapidocr_result(result: Any) -> List[Dict[str, Any]]:
@@ -368,6 +462,11 @@ def duration_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1000))
 
 
+def safe_name(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-")
+    return normalized[:120] or "request"
+
+
 def build_handler(config: WorkerConfig) -> type[RapidOcrWorkerHandler]:
     class ConfiguredRapidOcrWorkerHandler(RapidOcrWorkerHandler):
         pass
@@ -377,18 +476,30 @@ def build_handler(config: WorkerConfig) -> type[RapidOcrWorkerHandler]:
 
 
 def parse_args(argv: Optional[List[str]] = None) -> WorkerConfig:
-    parser = argparse.ArgumentParser(description="PriceVision RapidOCR worker skeleton")
+    parser = argparse.ArgumentParser(description="PriceVision RapidOCR worker")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--disable-rapidocr", action="store_true")
+    parser.add_argument("--rapidocr-input-mode", choices=["path", "numpy", "pil"], default="path")
+    parser.add_argument("--debug-dump-dir", default=None)
     args = parser.parse_args(argv)
-    return WorkerConfig(host=args.host, port=args.port, enable_rapidocr=not args.disable_rapidocr)
+    return WorkerConfig(
+        host=args.host,
+        port=args.port,
+        enable_rapidocr=not args.disable_rapidocr,
+        rapidocr_input_mode=args.rapidocr_input_mode,
+        debug_dump_dir=args.debug_dump_dir,
+    )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     config = parse_args(argv)
     server = ThreadingHTTPServer((config.host, config.port), build_handler(config))
-    print(f"[rapidocr-worker] listening on http://{config.host}:{config.port}", flush=True)
+    print(
+        f"[rapidocr-worker] listening on http://{config.host}:{config.port} "
+        f"input_mode={config.rapidocr_input_mode} debug_dump_dir={config.debug_dump_dir}",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
