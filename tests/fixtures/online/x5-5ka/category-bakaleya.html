@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>5ка Каталог - Бакалея</title>
+  <script id="__NEXT_DATA__" type="application/json">
+{
+  "props": {
+    "pageProps": {
+      "initialState": {
+        "catalog": {
+          "products": {
+            "items": [
+              {
+                "id": "5001",
+                "product_id": "5001",
+                "name": "Молоко Простоквашино 3.2% 930мл",
+                "brand": "Простоквашино",
+                "size": "930мл",
+                "barcode": "4607029428179",
+                "url": "/product/5001/",
+                "price": "89.90",
+                "old_price": "95.00",
+                "promo_price": null,
+                "available": true,
+                "stock": 100
+              },
+              {
+                "id": "5002",
+                "product_id": "5002",
+                "name": "Хлеб Бородинский 350г",
+                "brand": "Хлебзавод №1",
+                "size": "350г",
+                "barcode": "4607065961012",
+                "url": "/product/5002/",
+                "price": "49.00",
+                "old_price": null,
+                "promo_price": "39.00",
+                "available": true,
+                "stock": 50
+              },
+              {
+                "id": "5003",
+                "product_id": "5003",
+                "name": "Сыр Российский 45% 200г",
+                "brand": "Российский",
+                "size": "200г",
+                "barcode": "4607065961013",
+                "url": "/product/5003/",
+                "price": "189.00",
+                "old_price": "219.00",
+                "promo_price": null,
+                "available": false,
+                "stock": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="catalog-page">
+    <h1>Бакалея</h1>
+    <div class="products-grid">
+      <div class="product-card" data-id="5001" data-price="89.90" data-old-price="95.00" data-barcode="4607029428179">
+        <a href="/product/5001/" title="Молоко Простоквашино 3.2% 930мл">
+          <span class="product-title">Молоко Простоквашино 3.2% 930мл</span>
+        </a>
+        <div class="price">89.90 ₽</div>
+        <div class="old-price">95.00 ₽</div>
+        <div class="availability in-stock">В наличии</div>
+      </div>
+
+      <div class="product-card" data-id="5002" data-price="49.00" data-promo-price="39.00" data-barcode="4607065961012">
+        <a href="/product/5002/" title="Хлеб Бородинский 350г">
+          <span class="product-title">Хлеб Бородинский 350г</span>
+        </a>
+        <div class="price">49.00 ₽</div>
+        <div class="promo-price">39.00 ₽</div>
+        <div class="availability in-stock">В наличии</div>
+      </div>
+
+      <div class="product-card" data-id="5003" data-price="189.00" data-old-price="219.00" data-barcode="4607065961013">
+        <a href="/product/5003/" title="Сыр Российский 45% 200г">
+          <span class="product-title">Сыр Российский 45% 200г</span>
+        </a>
+        <div class="price">189.00 ₽</div>
+        <div class="old-price">219.00 ₽</div>
+        <div class="availability out-of-stock">Нет в наличии</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

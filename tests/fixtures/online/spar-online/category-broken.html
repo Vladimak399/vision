@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>SPAR — сломанная разметка</title>
+</head>
+<body>
+  <div class="catalog-page">
+    <h1>Бакалея</h1>
+    <div class="products-grid">
+      <!-- Товар без data-price -->
+      <div class="product-card" data-id="9001" data-barcode="12345678">
+        <a href="/product/9001/" title="Товар без цены">
+          <span class="product-title">Товар без цены</span>
+        </a>
+        <div class="availability in-stock">В наличии</div>
+      </div>
+      <!-- Товар без title -->
+      <div class="product-card" data-id="9002" data-price="99.90">
+        <div class="price">99.90 ₽</div>
+        <div class="availability in-stock">В наличии</div>
+      </div>
+      <!-- Корректный товар среди сломанных -->
+      <div class="product-card" data-id="9003" data-price="149.00" data-barcode="4607029428193">
+        <a href="/product/9003/" title="Корректный товар 149р">
+          <span class="product-title">Корректный товар 149р</span>
+        </a>
+        <div class="price">149.00 ₽</div>
+        <div class="availability in-stock">В наличии</div>
+      </div>
+      <!-- Товар с битым data-price -->
+      <div class="product-card" data-id="9004" data-price="abc" data-barcode="12345679">
+        <a href="/product/9004/" title="Товар с битой ценой">
+          <span class="product-title">Товар с битой ценой</span>
+        </a>
+        <div class="price">abc ₽</div>
+        <div class="availability in-stock">В наличии</div>
+      </div>
+      <!-- HTML-сущности в названии -->
+      <div class="product-card" data-id="9005" data-price="199.00" data-barcode="4607029428200">
+        <a href="/product/9005/" title="Сыр &quot;Российский&quot; 45% 200г">
+          <span class="product-title">Сыр &quot;Российский&quot; 45% 200г</span>
+        </a>
+        <div class="price">199.00 ₽</div>
+        <div class="availability in-stock">В наличии</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

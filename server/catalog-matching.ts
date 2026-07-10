@@ -4,7 +4,43 @@ export type CatalogMatchCandidate = { product: CatalogMatchProduct; score: numbe
 
 type F = { text: string; tokens: string[]; set: Set<string>; brand: string | null; size: string | null; baseFamily: string | null; variants: string[]; family: string | null };
 const stop = new Set(["и", "в", "на", "для", "с", "со", "без", "из", "от", "руб", "цена", "шт"]);
-const brands: Record<string,string> = { "бабкины":"babkiny", "бабкин":"babkiny", "яшкино":"yashkino", "милка":"milka", "milka":"milka", "нескафе":"nescafe", "nescafe":"nescafe", "джинн":"djinn", "gin":"djinn", "мартин":"martin", "мартина":"martin", "нивеа":"nivea", "nivea":"nivea", "ариэль":"ariel", "ariel":"ariel", "палмолив":"palmolive", "palmolive":"palmolive", "дав":"dove", "dove":"dove", "колгейт":"colgate", "colgate":"colgate", "персил":"persil", "persil":"persil" };
+
+// Транслитерация: русский ↔ латиница (для fuzzy-поиска)
+const ruToLat: Record<string, string> = {
+  "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+  "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+  "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
+  "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ы": "y", "э": "e",
+  "ю": "yu", "я": "ya",
+};
+
+const latToRu: Record<string, string> = {
+  "a": "а", "b": "б", "v": "в", "g": "г", "d": "д", "e": "е",
+  "zh": "ж", "z": "з", "i": "и", "y": "й", "k": "к", "l": "л", "m": "м",
+  "n": "н", "o": "о", "p": "п", "r": "р", "s": "с", "t": "т", "u": "у", "f": "ф",
+  "kh": "х", "ts": "ц", "ch": "ч", "sh": "ш", "sch": "щ",
+  "yu": "ю", "ya": "я",
+};
+
+/**
+ * Транслитерация текста: русский → латиница и латиница → русский.
+ * Используется для fuzzy-поиска: "splat" совпадает с "Сплат".
+ */
+export function transliterate(text: string): string {
+  const normalized = text.toLowerCase();
+  let result = normalized;
+  // Сначала латиница → русский
+  for (const [lat, ru] of Object.entries(latToRu)) {
+    result = result.replace(new RegExp(lat, "gi"), ru);
+  }
+  // Потом русский → латиница
+  for (const [ru, lat] of Object.entries(ruToLat)) {
+    result = result.replace(new RegExp(ru, "gi"), lat);
+  }
+  // Возвращаем в нижнем регистре для сравнения
+  return result.toLowerCase();
+}
+const brands: Record<string,string> = { "бабкины":"babkiny", "бабкин":"babkiny", "яшкино":"yashkino", "милка":"milka", "milka":"milka", "нескафе":"nescafe", "nescafe":"nescafe", "джинн":"djinn", "gin":"djinn", "мартин":"martin", "мартина":"martin", "нивеа":"nivea", "nivea":"nivea", "ариэль":"ariel", "ariel":"ariel", "палмолив":"palmolive", "palmolive":"palmolive", "дав":"dove", "dove":"dove", "колгейт":"colgate", "colgate":"colgate", "персил":"persil", "persil":"persil", "splat":"splat", "сплат":"splat", "president":"president", "президент":"president" };
 const aliases: Record<string,string> = { "семечки":"семечка", "семечек":"семечка", "семена":"семечка", "вафли":"вафля", "вафельные":"вафля", "трубочки":"трубочка", "полосатые":"полосатый", "полосатых":"полосатый", "классические":"классический", "жареные":"жареный", "жаренные":"жареный", "соленые":"соленый", "солёные":"соленый", "солью":"соль", "морская":"морской", "очищенные":"очищенный", "тыквы":"тыква", "тыквенные":"тыква", "шампуни":"шампунь", "шампуня":"шампунь", "гели":"гель", "крема":"крем", "кремы":"крем", "порошки":"порошок", "капсулы":"капсула", "таблетки":"таблетка", "пасты":"паста", "паста":"паста", "зубная":"зубной", "зубные":"зубной", "бальзамы":"бальзам", "средства":"средство", "посуда":"посуды", "бутылки":"бутылка", "бутылка":"бутылка", "флаконы":"флакон" };
 const families = new Set(["семечка", "вафля", "трубочка", "кофе", "чай", "шоколад", "печенье", "конфета", "соус", "лапша", "мыло", "гель", "шампунь", "крем", "порошок", "капсула", "таблетка", "паста", "ополаскиватель", "дезодорант", "бальзам", "средство"]);
 const low = new Set(["классический", "жареный", "соленый", "соль", "морской"]);
@@ -14,8 +50,8 @@ const packagingTokens = new Set(["пакет", "флакон", "бутылка",
 export function getCatalogMatchCandidates(recognized: RecognizedMatchInput, products: CatalogMatchProduct[], options: { limit?: number } = {}) {
   const rf = makeFeatures([recognized.rawName, recognized.brand, recognized.sizeText, recognized.priceTagText, recognized.productVisibleText].filter(Boolean).join(" "));
   if (!rf.tokens.length) return [];
-  const candidates = products.filter((p) => p.is_active !== false).map((p) => score(p, rf)).filter((c) => c.score > 0).sort((a,b) => b.score - a.score).slice(0, Math.max(options.limit ?? 5, 12));
-  return markAmbiguous(candidates, rf).sort((a,b) => b.score - a.score).slice(0, options.limit ?? 5);
+  const candidates = products.filter((p) => p.is_active !== false).map((p) => score(p, rf)).filter((c) => c.score > 0).sort((a,b) => b.score - a.score).slice(0, Math.max(options.limit ?? 30, 30));
+  return markAmbiguous(candidates, rf).sort((a,b) => b.score - a.score).slice(0, options.limit ?? 30);
 }
 
 export function buildCatalogMatchKey(recognized: RecognizedMatchInput) {
@@ -30,10 +66,51 @@ function score(product: CatalogMatchProduct, rf: F): CatalogMatchCandidate {
   let matched = 0, total = 0;
   for (const t of rf.tokens) { const w = low.has(t) ? 0.35 : families.has(t) || Object.values(brands).includes(t) ? 1.2 : 1; total += w; if (pf.set.has(t)) matched += w; }
   let s = total ? (matched / total) * 0.7 : 0;
+
+  // a) Substring match: токен распознавания входит в название продукта (или наоборот)
+  // Исключаем токены, которые уже совпадают через обычные токены (name_tokens) - они уже учтены
+  let substringScore = 0;
+  for (const rt of rf.tokens) {
+    // Пропускаем: уже совпадающие токены, brand, family, variant, low tokens
+    if (pf.set.has(rt)) continue;
+    if (rf.brand && rt === rf.brand) continue;
+    if (rf.baseFamily && (rt === rf.brand || rt === rf.family || rt === rf.baseFamily)) continue;
+    if (rf.variants.includes(rt)) continue;
+    if (low.has(rt)) continue;
+    for (const pt of pf.tokens) {
+      if (pt.length >= 3 && !pf.set.has(rt)) {
+        if (rt.includes(pt) || pt.includes(rt)) {
+          substringScore += 0.15;
+        }
+      }
+    }
+  }
+  if (substringScore > 0) {
+    s += substringScore;
+    reasons.push("substring_match");
+  }
+
+  // b) Транслитерация: рус ↔ лат (splat = Сплат = splat)
+  let translitScore = 0;
+  for (const rt of rf.tokens) {
+    const rtTranslit = transliterate(rt);
+    for (const pt of pf.tokens) {
+      const ptTranslit = transliterate(pt);
+      if (rtTranslit === ptTranslit && rt !== pt) {
+        // Транслитерация сделала токены равными (они различаются исходно)
+        translitScore += 0.4;
+      }
+    }
+  }
+  if (translitScore > 0) {
+    s += translitScore;
+    reasons.push("transliteration");
+  }
+
   if (rf.brand && pf.brand && rf.brand === pf.brand) { s += 0.16; reasons.push("brand"); }
   if (rf.baseFamily && pf.baseFamily && rf.baseFamily === pf.baseFamily) { s += 0.12; reasons.push("product_family"); }
-  if (rf.size && pf.size && rf.size === pf.size) { s += 0.12; reasons.push("size"); }
-  else if (rf.size && pf.size && rf.size !== pf.size) { s -= 0.18; reasons.push("size_mismatch_review"); }
+  if (rf.size && pf.size && rf.size === pf.size) { s += 0.18; reasons.push("size"); }
+  else if (rf.size && pf.size && rf.size !== pf.size) { s -= 0.08; reasons.push("size_mismatch_review"); }
   else if (!rf.size && pf.size) { s -= 0.02; reasons.push("missing_size_review"); }
   const sharedVariants = rf.variants.filter((v) => pf.variants.includes(v));
   if (sharedVariants.length) { s += Math.min(sharedVariants.length * 0.04, 0.08); reasons.push("variant"); }

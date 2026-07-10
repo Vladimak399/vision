@@ -3,11 +3,14 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import {
   BarChart3,
+  Camera,
+  FileUp,
   Building2,
   LogOut,
   PackageSearch,
   Settings,
   UploadCloud,
+  Globe,
 } from "lucide-react";
 
 import { getCurrentUser } from "../../server/auth";
@@ -62,20 +65,20 @@ export default async function AppPage() {
   const steps = canManageWorkspace ? adminSteps : workerSteps;
   const quickLinks = [
     {
-      href: "/app/monitoring/new",
-      title: "Создать мониторинг",
-      text: "Новая сессия для магазина: фото, распознавание, проверка, Excel.",
-      icon: BarChart3,
+      href: "/app/price-capture",
+      title: "Мониторинг конкурентов",
+      text: "Загрузка фото полок конкурентов → распознавание → сопоставление → выгрузка Excel.",
+      icon: Camera,
       primary: true,
       adminOnly: false,
     },
     {
-      href: "/app/monitoring",
-      title: "Открыть сессии",
-      text: "Продолжить загрузку фото, проверку товаров или выгрузку Excel.",
-      icon: PackageSearch,
+      href: "/app/template-import",
+      title: "Импорт шаблона",
+      text: "Загрузка шаблона мониторинга Яны (XLSX) для парсинга товаров и магазинов.",
+      icon: FileUp,
       primary: false,
-      adminOnly: false,
+      adminOnly: true,
     },
     {
       href: "/app/catalog/import",
@@ -93,6 +96,14 @@ export default async function AppPage() {
       primary: false,
       adminOnly: true,
     },
+    {
+      href: "/app/online-monitoring",
+      title: "Онлайн-мониторинг",
+      text: "Сбор цен из онлайн-каталогов конкурентов. Требует настройки источников.",
+      icon: Globe,
+      primary: false,
+      adminOnly: true,
+    },
   ].filter((item) => canManageWorkspace || !item.adminOnly);
 
   return (
@@ -103,11 +114,12 @@ export default async function AppPage() {
             PriceVision
           </Link>
           <nav className="nav" aria-label="Основные разделы">
-            <Link href="/app/monitoring">Мониторинг</Link>
+            <Link href="/app/price-capture">Мониторинг конкурентов</Link>
             {canManageWorkspace ? <Link href="/app/catalog">Каталог</Link> : null}
             {canManageWorkspace ? <Link href="/app/stores">Магазины</Link> : null}
             {canManageWorkspace ? <Link href="/app/competitors">Конкуренты</Link> : null}
             {canManageWorkspace ? <Link href="/app/ai-diagnostics">Диагностика</Link> : null}
+            {canManageWorkspace ? <Link href="/app/online-monitoring">Онлайн-мониторинг</Link> : null}
           </nav>
         </div>
       </header>

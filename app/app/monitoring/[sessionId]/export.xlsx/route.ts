@@ -57,6 +57,11 @@ type ExportItem = {
   department: string | null;
   status: string;
   created_at: string;
+  evidence: {
+    id: string;
+    photo_id: string;
+    storage_path: string;
+  } | null;
   matches: ExportMatch[] | null;
 };
 
@@ -102,7 +107,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   const { data: items, error: itemsError } = await supabase
     .from("recognized_items")
     .select(
-      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text, own_price_minor, currency))",
+      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text, own_price_minor, currency)), evidence(id, photo_id, storage_path)",
     )
     .eq("company_id", companyId)
     .eq("session_id", sessionId)
@@ -132,6 +137,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["Needs review без кандидата", String(summary.needsReviewWithoutCandidate)],
     ["Needs review с кандидатом", String(summary.needsReviewWithCandidate)],
     ["Большая разница цены", String(summary.largePriceDiff)],
+    ["С Evidence (фото-доказательство)", String(summary.withEvidence)],
+    ["Без Evidence", String(summary.withoutEvidence)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
   ]);
   const itemsSheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": "Нет товаров для экспорта" }]);
@@ -152,7 +159,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
 }
 
 function buildExportSummary(items: ExportItem[]) {
-  return items.reduce(
+  const summary = items.reduce(
     (summary, item) => {
       const activeMatch = getActiveMatch(item.matches);
       const product = activeMatch?.catalog_products ?? null;
@@ -169,10 +176,25 @@ function buildExportSummary(items: ExportItem[]) {
       }
       if (diffPercent !== null && Math.abs(diffPercent) >= 0.05) summary.largePriceDiff += 1;
 
+      // Check evidence
+      if (!item.evidence) summary.withoutEvidence += 1;
+      else summary.withEvidence += 1;
+
       return summary;
     },
-    { matched: 0, unmatched: 0, needsReview: 0, needsReviewWithoutCandidate: 0, needsReviewWithCandidate: 0, largePriceDiff: 0 },
+    {
+      matched: 0,
+      unmatched: 0,
+      needsReview: 0,
+      needsReviewWithoutCandidate: 0,
+      needsReviewWithCandidate: 0,
+      largePriceDiff: 0,
+      withoutEvidence: 0,
+      withEvidence: 0
+    },
   );
+
+  return summary;
 }
 
 function buildExportRow(item: ExportItem) {
@@ -191,6 +213,8 @@ function buildExportRow(item: ExportItem) {
     "Нужно внимание": needsAttention ? "Да" : "Нет",
     "Не найдено в ассортименте": notFound ? "Да" : "Нет",
     "Комментарий": buildComment({ item, productFound: Boolean(product), notFound, diffPercent }),
+    "Evidence ID": item.evidence?.id ?? "",
+    "Evidence Photo ID": item.evidence?.photo_id ?? "",
     "Каталог SKU": product?.external_sku ?? "",
     "Каталог товар": product?.name ?? "",
     "Каталог бренд": product?.brand ?? "",

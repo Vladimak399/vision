@@ -37,6 +37,7 @@ type ChatCompletionsResponse = {
 };
 
 const DEFAULT_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/";
 
 export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Promise<TextAiJsonResult<T>> {
   const aiConfig = getAiRuntimeConfig();
@@ -45,18 +46,34 @@ export async function runTextAiJson<T>({ system, user }: TextAiJsonRequest): Pro
     throw new Error("Text AI provider is disabled.");
   }
 
-  const models = [aiConfig.text.model];
-  if (aiConfig.text.provider === "gemini" && aiConfig.fallback.provider === "gemini" && aiConfig.fallback.model !== aiConfig.text.model) {
-    models.push(aiConfig.fallback.model);
+  // Строим цепочку попыток: основной провайдер + fallback.
+  // Поддерживаем переход между провайдерами (gemini → openrouter), а не только смену модели.
+  const attempts: Array<{ provider: string; model: string }> = [
+    { provider: aiConfig.text.provider, model: aiConfig.text.model },
+  ];
+  if (aiConfig.fallback.provider !== "disabled" && aiConfig.fallback.model) {
+    const isDifferentModel = aiConfig.fallback.model !== aiConfig.text.model;
+    const isDifferentProvider = aiConfig.fallback.provider !== aiConfig.text.provider;
+    if (isDifferentModel || isDifferentProvider) {
+      attempts.push({ provider: aiConfig.fallback.provider, model: aiConfig.fallback.model });
+    }
   }
 
   let lastError: unknown;
-  for (const [index, model] of models.entries()) {
+  for (const [index, attempt] of attempts.entries()) {
     try {
-      return await runTextAiJsonWithModel<T>({ provider: aiConfig.text.provider, model, system, user });
+      return await runTextAiJsonWithModel<T>({
+        provider: attempt.provider,
+        model: attempt.model,
+        system,
+        user,
+      });
     } catch (error) {
       lastError = error;
-      if (index === 0 && isAiFallbackCandidate(error) && models.length > 1) continue;
+      // На основной попытке при транзитной ошибке (429/5xx) пробуем fallback.
+      if (index === 0 && isAiFallbackCandidate(error) && attempts.length > 1) {
+        continue;
+      }
       throw error;
     }
   }
@@ -73,7 +90,7 @@ async function runTextAiJsonWithModel<T>({ provider, model, system, user }: { pr
   }
 
   if (!baseUrl) {
-    throw new Error("AI-провайдер отключен или не поддерживается. Проверьте AI_VISION_PROVIDER и AI_TEXT_PROVIDER.");
+    throw new Error("AI-провайдер отключен или не поддерживается. Проверьте AI_TEXT_PROVIDER и AI_FALLBACK_PROVIDER.");
   }
 
   return runTextModel<T>({
@@ -131,10 +148,21 @@ async function runTextModel<T>({
     return responseBody;
   });
   const content = body?.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Text AI response did not contain message content.");
+  if (!content) {
+    // Пустой ответ — транзитная ошибка, даём fallback-провайдеру шанс.
+    throw new AiHttpError("Text AI response did not contain message content.", 502);
+  }
+
+  let parsed: T;
+  try {
+    parsed = JSON.parse(content) as T;
+  } catch {
+    // Невалидный JSON — тоже транзитная ошибка, fallback может справиться лучше.
+    throw new AiHttpError("Text AI returned invalid JSON.", 502);
+  }
 
   return {
-    data: JSON.parse(content) as T,
+    data: parsed,
     usage: {
       provider,
       model,
@@ -157,12 +185,20 @@ function getProviderApiKey(provider: string) {
     return process.env.GEMINI_API_KEY;
   }
 
+  if (provider === "openrouter") {
+    return process.env.OPENROUTER_API_KEY;
+  }
+
   return null;
 }
 
 function getProviderBaseUrl(provider: string) {
   if (provider === "gemini") {
     return DEFAULT_GEMINI_OPENAI_BASE_URL;
+  }
+
+  if (provider === "openrouter") {
+    return DEFAULT_OPENROUTER_BASE_URL;
   }
 
   return null;

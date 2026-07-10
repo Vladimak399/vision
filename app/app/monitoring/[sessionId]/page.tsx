@@ -6,6 +6,7 @@ import { getCurrentUser } from "../../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../../server/primary-membership";
 import { MonitoringPhotoUploadForm } from "./photo-upload-form";
 import { QueueRecognitionForm } from "./queue-recognition-form";
+import { CompleteSessionForm } from "./complete-session-form";
 
 export const dynamic = "force-dynamic";
 
@@ -244,6 +245,8 @@ export default async function MonitoringSessionPage({ params }: PageProps) {
       </section>
 
       <ExportSection sessionId={session.id} reviewCount={reviewCount} recognizedCount={recognizedCount} />
+
+      <CompleteSessionForm sessionId={session.id} status={session.status} />
 
       {canUseTechnicalTools ? (
         <details className="card">

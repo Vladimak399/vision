@@ -1,4 +1,5 @@
-export type AiProvider = "openai" | "deepseek" | "gemini" | "disabled";
+export type AiProvider = "openai" | "deepseek" | "gemini" | "openrouter" | "disabled";
+export type AiConfig = AiRuntimeConfig; // Alias for backward compatibility
 
 export type AiTaskConfig = {
   provider: AiProvider;
@@ -38,6 +39,10 @@ export function getAiRuntimeConfig(): AiRuntimeConfig {
   };
 }
 
+export function getAiConfig(): AiRuntimeConfig {
+  return getAiRuntimeConfig();
+}
+
 export function assertAiProviderKey(provider: AiProvider) {
   if (provider === "disabled") {
     throw new Error("AI provider is disabled.");
@@ -54,10 +59,14 @@ export function assertAiProviderKey(provider: AiProvider) {
   if (provider === "gemini" && !process.env.GEMINI_API_KEY && !process.env.AI_TEXT_API_KEY) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
+
+  if (provider === "openrouter" && !process.env.OPENROUTER_API_KEY) {
+    throw new Error("OPENROUTER_API_KEY is not configured.");
+  }
 }
 
 function parseProvider(value: string | undefined, fallback: AiProvider): AiProvider {
-  if (value === "openai" || value === "deepseek" || value === "gemini" || value === "disabled") {
+  if (value === "openai" || value === "deepseek" || value === "gemini" || value === "openrouter" || value === "disabled") {
     return value;
   }
 

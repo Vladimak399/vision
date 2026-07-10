@@ -30,6 +30,8 @@ export type ShelfRecognitionItem = {
 export type ShelfRecognitionPayload = {
   items: ShelfRecognitionItem[];
   warnings: string[];
+  normalizeError?: string;
+  raw?: unknown;
 };
 
 export type ShelfRecognitionUsage = {
@@ -42,4 +44,31 @@ export type ShelfRecognitionUsage = {
 
 export type ShelfRecognitionResult = ShelfRecognitionPayload & {
   usage: ShelfRecognitionUsage;
+};
+
+// "Свободные" типы для парсинга ответов AI — разные провайдеры возвращают поля
+// под разными ключами (name/product_name/title, price/price_text/current_price и т.д.).
+export type LooseRecognitionItem = Partial<ShelfRecognitionItem> & {
+  name?: unknown;
+  product_name?: unknown;
+  product?: unknown;
+  title?: unknown;
+  price?: unknown;
+  price_text?: unknown;
+  current_price_minor?: unknown;
+  current_price?: unknown;
+  old_price?: unknown;
+  old_price_text?: unknown;
+  promo_price?: unknown;
+  promo_price_text?: unknown;
+  packaging_text?: unknown;
+  visible_text?: unknown;
+  location?: unknown;
+};
+
+export type LooseRecognitionPayload = Partial<ShelfRecognitionPayload> & {
+  products?: LooseRecognitionItem[];
+  results?: LooseRecognitionItem[];
+  data?: LooseRecognitionItem[] | { items?: LooseRecognitionItem[]; products?: LooseRecognitionItem[]; warnings?: unknown };
+  warning?: unknown;
 };

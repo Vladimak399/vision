@@ -4,5 +4,11 @@
     "deploymentEnabled": {
       "internal-*": false
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/online-monitoring",
+      "schedule": "0 */6 * * *"
+    }
+  ]
 }

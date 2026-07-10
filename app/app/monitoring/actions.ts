@@ -228,6 +228,28 @@ export async function uploadMonitoringPhotos(
     uploadedCount += 1;
   }
 
+  // Check if all photos are failed after upload
+  const { allFailed, photoCounts } = await checkSessionPhotoStatus(sessionId, companyId);
+
+  if (allFailed && photoCounts.failed > 0) {
+    // Mark session as failed if all photos failed
+    const { error: sessionError } = await supabase
+      .from("monitoring_sessions")
+      .update({
+        status: "failed",
+        completed_at: new Date().toISOString()
+      })
+      .eq("company_id", companyId)
+      .eq("id", sessionId)
+      .in("status", ["draft", "uploading", "processing", "review"]);
+
+    if (sessionError) {
+      console.error(`Failed to mark session as failed: ${sessionError.message}`);
+    } else {
+      console.log(`Session ${sessionId} marked as failed due to ${photoCounts.failed} failed photos`);
+    }
+  }
+
   revalidatePath("/app/monitoring");
   revalidatePath(`/app/monitoring/${sessionId}`);
   return { message: `Загружено фото: ${uploadedCount}. Отдел: ${getDepartmentLabel(department)}.` };
@@ -363,6 +385,46 @@ export async function queueRecognitionForSession(
 
   if (sessionUpdateError) {
     return { error: `Фото поставлены в очередь, но статус сессии не обновился: ${sessionUpdateError.message}` };
+  }
+
+  // Check if all remaining photos are failed after queueing
+  const { allFailed, photoCounts } = await checkSessionPhotoStatus(sessionId, companyId);
+
+  if (allFailed && photoCounts.failed > 0) {
+    // Mark session as failed if all photos failed
+    const { error: sessionError } = await supabase
+      .from("monitoring_sessions")
+      .update({
+        status: "failed",
+        completed_at: new Date().toISOString()
+      })
+      .eq("company_id", companyId)
+      .eq("id", sessionId)
+      .in("status", ["draft", "uploading", "processing", "review"]);
+
+    if (sessionError) {
+      console.error(`Failed to mark session as failed: ${sessionError.message}`);
+    } else {
+      console.log(`Session ${sessionId} marked as failed due to ${photoCounts.failed} failed photos`);
+    }
+  }
+
+  // Check if session should move to review stage
+  const { shouldMoveToReview } = await checkSessionReadinessForReview(sessionId, companyId);
+
+  if (shouldMoveToReview) {
+    const { error: reviewError } = await supabase
+      .from("monitoring_sessions")
+      .update({ status: "review" })
+      .eq("company_id", companyId)
+      .eq("id", sessionId)
+      .in("status", ["draft", "uploading", "processing"]);
+
+    if (reviewError) {
+      console.error(`Failed to move session to review: ${reviewError.message}`);
+    } else {
+      console.log(`Session ${sessionId} moved to review stage`);
+    }
   }
 
   revalidatePath("/app/monitoring");
@@ -563,4 +625,179 @@ function sanitizeFilename(filename: string) {
     .slice(0, 120);
 
   return safeName || fallback;
+}
+
+export type CompleteSessionState = {
+  error?: string;
+  message?: string;
+};
+
+// Helper function to check job status for a session
+async function checkSessionJobStatus(sessionId: string, companyId: string): Promise<{
+  hasFailedJobs: boolean;
+  jobCounts: Record<string, number>;
+}> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: jobs, error } = await supabase
+    .from("jobs")
+    .select("status")
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId)
+    .eq("kind", "photo_ocr");
+
+  if (error || !jobs) {
+    return { hasFailedJobs: false, jobCounts: {} };
+  }
+
+  const jobCounts = jobs.reduce((acc, job) => {
+    acc[job.status] = (acc[job.status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const hasFailedJobs = jobs.some(job => job.status === "failed");
+
+  return { hasFailedJobs, jobCounts };
+}
+
+// Helper function to check if all photos in a session are failed
+async function checkSessionPhotoStatus(sessionId: string, companyId: string): Promise<{
+  allFailed: boolean;
+  photoCounts: Record<string, number>;
+  hasAnyProcessed: boolean;
+}> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: photos, error } = await supabase
+    .from("monitoring_photos")
+    .select("status")
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId);
+
+  if (error || !photos) {
+    return { allFailed: false, photoCounts: {}, hasAnyProcessed: false };
+  }
+
+  const photoCounts = photos.reduce((acc, photo) => {
+    acc[photo.status] = (acc[photo.status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const allFailed = photos.length > 0 && photos.every(photo => photo.status === "failed");
+  const hasAnyProcessed = photos.some(photo => photo.status === "processed");
+
+  return { allFailed, photoCounts, hasAnyProcessed };
+}
+
+// Helper function to check if session should move to review stage
+async function checkSessionReadinessForReview(sessionId: string, companyId: string): Promise<{
+  shouldMoveToReview: boolean;
+  photoCounts: Record<string, number>;
+}> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: photos, error } = await supabase
+    .from("monitoring_photos")
+    .select("status")
+    .eq("company_id", companyId)
+    .eq("session_id", sessionId);
+
+  if (error || !photos) {
+    return { shouldMoveToReview: false, photoCounts: {} };
+  }
+
+  const photoCounts = photos.reduce((acc, photo) => {
+    acc[photo.status] = (acc[photo.status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  // Move to review if all photos are processed (no more uploading, queued, or processing)
+  const hasUnprocessedPhotos = photos.some(photo =>
+    ["uploaded", "queued", "processing"].includes(photo.status)
+  );
+
+  const shouldMoveToReview = !hasUnprocessedPhotos && photos.length > 0;
+
+  return { shouldMoveToReview, photoCounts };
+}
+
+export async function completeMonitoringSession(
+  _state: CompleteSessionState,
+  formData: FormData,
+): Promise<CompleteSessionState> {
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const status = formData.get("status") === "cancelled" ? "cancelled" : "completed";
+  const reason = String(formData.get("reason") ?? "").trim();
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return { error: "Пользователь не авторизован." };
+  }
+
+  let membershipResult;
+  try {
+    membershipResult = await getPrimaryCompanyMembership();
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Не удалось проверить доступ к компании." };
+  }
+
+  if (membershipResult.status !== "ok") {
+    return { error: "Нет доступа к компании." };
+  }
+
+  if (!["admin", "manager"].includes(membershipResult.membership.role)) {
+    return { error: "Завершать сессии могут только admin или manager." };
+  }
+
+  const companyId = membershipResult.membership.companyId;
+  const supabase = await createSupabaseServerClient();
+
+  // Проверяем, что сессия не уже завершена
+  const { data: session, error: sessionError } = await supabase
+    .from("monitoring_sessions")
+    .select("id, status")
+    .eq("company_id", companyId)
+    .eq("id", sessionId)
+    .maybeSingle()
+    .returns<{ id: string; status: string } | null>();
+
+  if (sessionError) {
+    return { error: `Не удалось проверить сессию мониторинга: ${sessionError.message}` };
+  }
+
+  if (!session) {
+    return { error: "Сессия мониторинга не найдена в текущей компании." };
+  }
+
+  if (["completed", "cancelled", "failed"].includes(session.status)) {
+    return { error: `Сессия уже завершена со статусом: ${session.status}.` };
+  }
+
+  // Обновляем статус и время завершения
+  const updateData: { status: string; completed_at: string } = {
+    status,
+    completed_at: new Date().toISOString(),
+  };
+
+  if (reason) {
+    // Для ошибок можно добавить поле reason в будущем
+    console.log(`Session ${sessionId} ${status} reason: ${reason}`);
+  }
+
+  const { error: updateError } = await supabase
+    .from("monitoring_sessions")
+    .update(updateData)
+    .eq("company_id", companyId)
+    .eq("id", sessionId)
+    .in("status", ["draft", "uploading", "processing", "review"]);
+
+  if (updateError) {
+    return { error: `Не удалось завершить сессию: ${updateError.message}` };
+  }
+
+  revalidatePath("/app/monitoring");
+  revalidatePath(`/app/monitoring/${sessionId}`);
+
+  const statusMessage = status === "cancelled" ? "отменена" : "завершена";
+  return { message: `Сессия мониторинга ${statusMessage}.` };
 }

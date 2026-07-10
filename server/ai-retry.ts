@@ -20,7 +20,8 @@ export function isRetryableAiError(error: unknown) {
 }
 
 export function isAiFallbackCandidate(error: unknown) {
-  return error instanceof AiHttpError && (error.status === 429 || error.status === 503);
+  // Транзитные ошибки (лимит, перегрузка, пустой/битый ответ) — повод попробовать fallback-провайдер.
+  return error instanceof AiHttpError && (error.status === 429 || error.status === 500 || error.status === 502 || error.status === 503 || error.status === 504);
 }
 
 export async function withAiRetry<T>(operation: () => Promise<T>, options: AiRetryOptions = {}) {
