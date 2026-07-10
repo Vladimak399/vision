@@ -104,7 +104,9 @@ function printJson(value: unknown) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-main().catch((error) => {
-  printJson({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    printJson({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    process.exitCode = 1;
+  });
+}
