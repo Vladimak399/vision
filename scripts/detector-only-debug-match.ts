@@ -131,10 +131,10 @@ export function reportDraftToMatchItem(draft: DetectorOnlyReportDraft): {
 
 function priceFromReportProduct(product: NonNullable<DetectorOnlyReportDraft["product"]>): ParsedPriceCandidate | null {
   if (
-    product.priceMinor === null
-    && product.oldPriceMinor === null
-    && product.promoPriceMinor === null
-    && product.parsedPriceConfidence === null
+    product.priceMinor == null
+    && product.oldPriceMinor == null
+    && product.promoPriceMinor == null
+    && product.parsedPriceConfidence == null
   ) {
     return null;
   }
