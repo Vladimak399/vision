@@ -62,6 +62,40 @@ npm run check:evidence-readiness
 
 This performs schema probes only. It does not insert, update, or delete data. The check calls `select(...).limit(0)` on `competitor_shelf_items` and `price_capture_runs` to confirm that the evidence columns expected by the pipeline are visible to the configured Supabase client.
 
+## Controlled test-row dry run
+
+Before any real insert, create the one-row plan locally:
+
+```bash
+PRICEVISION_CONTROLLED_TEST_COMPANY_ID=<company uuid> \
+PRICEVISION_CONTROLLED_TEST_STORE_ID=<store uuid> \
+npm run plan:evidence-test-row -- --marker first-check --week 1
+```
+
+The command is dry-run only. It prints:
+
+```txt
+payloads.priceCaptureRun
+payloads.competitorShelfItem
+cleanup.tablesInOrder
+cleanup.evidenceWhere
+cleanup.runWhere
+```
+
+The test marker starts with:
+
+```txt
+PV_CONTROLLED_EVIDENCE_TEST_ROW
+```
+
+The cleanup order is intentionally evidence row first, then run row:
+
+```txt
+competitor_shelf_items -> price_capture_runs
+```
+
+No insert or delete is executed by `plan:evidence-test-row`.
+
 ## Current production schema observation
 
 `public.competitor_shelf_items` exists and RLS is enabled. On 2026-07-10, additive production migrations were applied for the local evidence fields and `price_capture_runs`.
