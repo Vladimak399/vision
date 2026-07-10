@@ -8,6 +8,7 @@ rmSync(".tmp/image-decoder-test", { recursive: true, force: true });
 mkdirSync(".tmp/image-decoder-test", { recursive: true });
 execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "tsc",
+  "server/catalog-matching.ts",
   "server/price-capture/crop-generator.ts",
   "server/price-capture/local-pipeline.ts",
   "server/price-capture/image-decoder.ts",
