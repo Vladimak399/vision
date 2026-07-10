@@ -12,7 +12,7 @@
 --   - RLS policies: DO $$ block with pg_policies existence check → no overwrite
 --   - Trigger: DROP IF EXISTS + CREATE (project standard pattern)
 --   - Operations are safe/repeatable for fresh DB and existing DB
-  - Trigger uses DROP IF EXISTS + CREATE as a safe repeatable project pattern
+--   - Trigger uses DROP IF EXISTS + CREATE as a safe repeatable project pattern
 
 -- ============================================================
 -- 1. Create table (idempotent — no-op if table already exists)
