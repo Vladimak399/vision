@@ -187,7 +187,11 @@ function extractPriceFragments(parsedPrice: ProductTextExtractorInput["parsedPri
     stringFromDiagnostics(diagnostics, "promoPriceText"),
   ];
 
-  return Array.from(new Set(fragments.map((value) => normalizeLine(value)).filter(Boolean)));
+  return Array.from(new Set(
+    fragments
+      .map((value) => normalizeLine(value))
+      .filter((value): value is string => Boolean(value)),
+  ));
 }
 
 function stringFromDiagnostics(diagnostics: Record<string, unknown> | undefined, key: string): string | null {
