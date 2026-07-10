@@ -1,0 +1,175 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+import { handleDetectorOnlyApiRequest } from "../server/price-capture/detector-only-api-boundary";
+
+export type DetectorOnlyDebugCliOptions = {
+  imagePath: string;
+  companyId: string;
+  storeId: string;
+  week: 1 | 2;
+  runId: string;
+  capturedDate: string | null;
+  contentType: string | null;
+  cropExtension: string | null;
+  cropPaddingPixels: number;
+  pretty: boolean;
+};
+
+export type DetectorOnlyDebugCliParseResult =
+  | { ok: true; options: DetectorOnlyDebugCliOptions }
+  | { ok: false; error: string };
+
+const DEFAULT_COMPANY_ID = "local-debug-company";
+const DEFAULT_STORE_ID = "local-debug-store";
+const DEFAULT_RUN_ID = "local-debug-run";
+const DEFAULT_CROP_PADDING_PIXELS = 1;
+
+export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCliParseResult {
+  const flags = new Map<string, string | true>();
+  const positionals: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (!token.startsWith("--")) {
+      positionals.push(token);
+      continue;
+    }
+
+    const equalsIndex = token.indexOf("=");
+    if (equalsIndex >= 0) {
+      flags.set(token.slice(0, equalsIndex), token.slice(equalsIndex + 1));
+      continue;
+    }
+
+    const next = argv[index + 1];
+    if (next && !next.startsWith("--")) {
+      flags.set(token, next);
+      index += 1;
+    } else {
+      flags.set(token, true);
+    }
+  }
+
+  const imagePath = positionals[0] ?? stringFlag(flags, "--image");
+  if (!imagePath) return { ok: false, error: usage("image path is required") };
+
+  const week = parseWeek(stringFlag(flags, "--week") ?? "1");
+  if (!week) return { ok: false, error: usage("--week must be 1 or 2") };
+
+  const cropPaddingPixels = parseNonNegativeInteger(
+    stringFlag(flags, "--crop-padding") ?? String(DEFAULT_CROP_PADDING_PIXELS),
+  );
+  if (cropPaddingPixels === null) {
+    return { ok: false, error: usage("--crop-padding must be a non-negative integer") };
+  }
+
+  return {
+    ok: true,
+    options: {
+      imagePath,
+      companyId: stringFlag(flags, "--company-id") ?? DEFAULT_COMPANY_ID,
+      storeId: stringFlag(flags, "--store-id") ?? DEFAULT_STORE_ID,
+      week,
+      runId: stringFlag(flags, "--run-id") ?? DEFAULT_RUN_ID,
+      capturedDate: stringFlag(flags, "--captured-date") ?? new Date().toISOString().slice(0, 10),
+      contentType: stringFlag(flags, "--content-type") ?? inferContentType(imagePath),
+      cropExtension: stringFlag(flags, "--crop-extension") ?? inferCropExtension(imagePath),
+      cropPaddingPixels,
+      pretty: !flags.has("--compact"),
+    },
+  };
+}
+
+export async function runDetectorOnlyDebug(options: DetectorOnlyDebugCliOptions): Promise<string> {
+  const bytes = await readFile(options.imagePath);
+  const response = await handleDetectorOnlyApiRequest({
+    companyId: options.companyId,
+    storeId: options.storeId,
+    week: options.week,
+    runId: options.runId,
+    capturedDate: options.capturedDate,
+    photo: {
+      bytes: new Uint8Array(bytes),
+      filename: path.basename(options.imagePath),
+      contentType: options.contentType,
+      storagePath: options.imagePath,
+    },
+    evidence: {
+      cropExtension: options.cropExtension,
+      cropPadding: { pixels: options.cropPaddingPixels },
+    },
+  });
+
+  return JSON.stringify(response, null, options.pretty ? 2 : 0);
+}
+
+async function main(): Promise<void> {
+  const parsed = parseDetectorOnlyDebugArgs(process.argv.slice(2));
+  if (!parsed.ok) {
+    console.error(parsed.error);
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    const json = await runDetectorOnlyDebug(parsed.options);
+    console.log(json);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Detector-only debug script failed");
+    process.exitCode = 1;
+  }
+}
+
+export function inferContentType(filePath: string): string | null {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".png") return "image/png";
+  if (extension === ".webp") return "image/webp";
+  return null;
+}
+
+function inferCropExtension(filePath: string): string | null {
+  const extension = path.extname(filePath).replace(/^\.+/, "").toLowerCase();
+  return extension || null;
+}
+
+function stringFlag(flags: Map<string, string | true>, name: string): string | null {
+  const value = flags.get(name);
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseWeek(value: string): 1 | 2 | null {
+  if (value === "1") return 1;
+  if (value === "2") return 2;
+  return null;
+}
+
+function parseNonNegativeInteger(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  return Number.parseInt(value, 10);
+}
+
+function usage(reason: string): string {
+  return [
+    `Error: ${reason}`,
+    "",
+    "Usage:",
+    "  npm run debug:detector-only -- ./photo.jpg [options]",
+    "",
+    "Options:",
+    "  --company-id <id>        Default: local-debug-company",
+    "  --store-id <id>          Default: local-debug-store",
+    "  --week <1|2>             Default: 1",
+    "  --run-id <id>            Default: local-debug-run",
+    "  --captured-date <date>   Default: today in YYYY-MM-DD",
+    "  --content-type <mime>    Default: inferred from extension",
+    "  --crop-extension <ext>   Default: inferred from extension",
+    "  --crop-padding <pixels>  Default: 1",
+    "  --compact                Print compact JSON",
+  ].join("\n");
+}
+
+if (require.main === module) {
+  void main();
+}
