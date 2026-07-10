@@ -7,6 +7,12 @@ export const OCR_CROP_PREPROCESS_DEFAULTS = {
   minOcrHeight: 80,
   paddingPx: 12,
   maxUpscaleFactor: 6,
+  panelExpansionEnabled: true,
+  panelWidthMultiplier: 4,
+  panelHeightMultiplier: 8,
+  panelMinWidth: 260,
+  panelMinHeight: 110,
+  panelUpwardBias: 0.68,
 } as const;
 
 export type OcrCropPreprocessOptions = {
@@ -16,10 +22,18 @@ export type OcrCropPreprocessOptions = {
   minOcrHeight?: number | null;
   paddingPx?: number | null;
   maxUpscaleFactor?: number | null;
+  panelExpansionEnabled?: boolean | null;
+  panelWidthMultiplier?: number | null;
+  panelHeightMultiplier?: number | null;
+  panelMinWidth?: number | null;
+  panelMinHeight?: number | null;
+  panelUpwardBias?: number | null;
   dumpCrops?: boolean | null;
   cropDumpDir?: string | null;
   sourceImageStem?: string | null;
 };
+
+export type OcrCropExpansionMode = "padding_only" | "price_tag_panel";
 
 export type OcrCropPreprocessPlan = {
   originalBBox: CropBBox;
@@ -32,6 +46,9 @@ export type OcrCropPreprocessPlan = {
   ocrInputHeight: number;
   upscaleFactor: number;
   paddingPx: number;
+  expansionMode: OcrCropExpansionMode;
+  panelExpansionEnabled: boolean;
+  panelUpwardBias: number;
   isProbablyTooSmallForOcr: boolean;
   wasExpanded: boolean;
   wasUpscaled: boolean;
@@ -49,12 +66,17 @@ export function buildOcrCropPreprocessPlan(input: {
   const originalBBox = normalizeBBox(input.originalBBox, imageDimensions);
   const isProbablyTooSmallForOcr = originalBBox.width < options.minSourceWidthForOcr
     || originalBBox.height < options.minSourceHeightForOcr;
-  const expandedBBox = expandBBoxAroundCenter({
-    bbox: originalBBox,
-    dimensions: imageDimensions,
-    targetWidth: Math.max(originalBBox.width + options.paddingPx * 2, options.minSourceWidthForOcr),
-    targetHeight: Math.max(originalBBox.height + options.paddingPx * 2, options.minSourceHeightForOcr),
-  });
+  const expansionMode: OcrCropExpansionMode = options.panelExpansionEnabled && isProbablyTooSmallForOcr
+    ? "price_tag_panel"
+    : "padding_only";
+  const expandedBBox = expansionMode === "price_tag_panel"
+    ? expandBBoxAsPriceTagPanel({ bbox: originalBBox, dimensions: imageDimensions, options })
+    : expandBBoxAroundCenter({
+        bbox: originalBBox,
+        dimensions: imageDimensions,
+        targetWidth: Math.max(originalBBox.width + options.paddingPx * 2, options.minSourceWidthForOcr),
+        targetHeight: Math.max(originalBBox.height + options.paddingPx * 2, options.minSourceHeightForOcr),
+      });
   const upscaleFactor = computeUpscaleFactor({
     width: expandedBBox.width,
     height: expandedBBox.height,
@@ -74,6 +96,9 @@ export function buildOcrCropPreprocessPlan(input: {
     ocrInputHeight: Math.max(1, Math.round(expandedBBox.height * upscaleFactor)),
     upscaleFactor,
     paddingPx: options.paddingPx,
+    expansionMode,
+    panelExpansionEnabled: options.panelExpansionEnabled,
+    panelUpwardBias: options.panelUpwardBias,
     isProbablyTooSmallForOcr,
     wasExpanded: !sameBBox(originalBBox, expandedBBox),
     wasUpscaled: upscaleFactor > 1,
@@ -90,7 +115,55 @@ function normalizeOptions(options?: OcrCropPreprocessOptions | null) {
     minOcrHeight: positiveInteger(options?.minOcrHeight, OCR_CROP_PREPROCESS_DEFAULTS.minOcrHeight),
     paddingPx: nonNegativeInteger(options?.paddingPx, OCR_CROP_PREPROCESS_DEFAULTS.paddingPx),
     maxUpscaleFactor: positiveInteger(options?.maxUpscaleFactor, OCR_CROP_PREPROCESS_DEFAULTS.maxUpscaleFactor),
+    panelExpansionEnabled: options?.panelExpansionEnabled ?? OCR_CROP_PREPROCESS_DEFAULTS.panelExpansionEnabled,
+    panelWidthMultiplier: positiveNumber(options?.panelWidthMultiplier, OCR_CROP_PREPROCESS_DEFAULTS.panelWidthMultiplier),
+    panelHeightMultiplier: positiveNumber(options?.panelHeightMultiplier, OCR_CROP_PREPROCESS_DEFAULTS.panelHeightMultiplier),
+    panelMinWidth: positiveInteger(options?.panelMinWidth, OCR_CROP_PREPROCESS_DEFAULTS.panelMinWidth),
+    panelMinHeight: positiveInteger(options?.panelMinHeight, OCR_CROP_PREPROCESS_DEFAULTS.panelMinHeight),
+    panelUpwardBias: unitFloat(options?.panelUpwardBias, OCR_CROP_PREPROCESS_DEFAULTS.panelUpwardBias),
   };
+}
+
+function expandBBoxAsPriceTagPanel(input: {
+  bbox: CropBBox;
+  dimensions: ImageDimensions;
+  options: ReturnType<typeof normalizeOptions>;
+}): CropBBox {
+  const targetWidth = Math.max(
+    input.bbox.width + input.options.paddingPx * 2,
+    Math.round(input.bbox.width * input.options.panelWidthMultiplier),
+    input.options.panelMinWidth,
+    input.options.minSourceWidthForOcr,
+  );
+  const targetHeight = Math.max(
+    input.bbox.height + input.options.paddingPx * 2,
+    Math.round(input.bbox.height * input.options.panelHeightMultiplier),
+    input.options.panelMinHeight,
+    input.options.minSourceHeightForOcr,
+  );
+  return expandBBoxWithVerticalBias({
+    bbox: input.bbox,
+    dimensions: input.dimensions,
+    targetWidth,
+    targetHeight,
+    upwardBias: input.options.panelUpwardBias,
+  });
+}
+
+function expandBBoxWithVerticalBias(input: {
+  bbox: CropBBox;
+  dimensions: ImageDimensions;
+  targetWidth: number;
+  targetHeight: number;
+  upwardBias: number;
+}): CropBBox {
+  const width = Math.min(input.dimensions.width, Math.max(1, Math.floor(input.targetWidth)));
+  const height = Math.min(input.dimensions.height, Math.max(1, Math.floor(input.targetHeight)));
+  const centerX = input.bbox.x + input.bbox.width / 2;
+  const topGrowth = Math.max(0, height - input.bbox.height) * input.upwardBias;
+  const x = clamp(Math.round(centerX - width / 2), 0, input.dimensions.width - width);
+  const y = clamp(Math.round(input.bbox.y - topGrowth), 0, input.dimensions.height - height);
+  return { x, y, width, height };
 }
 
 function expandBBoxAroundCenter(input: {
@@ -147,9 +220,19 @@ function positiveInteger(value: number | null | undefined, fallback: number): nu
   return normalized > 0 ? normalized : fallback;
 }
 
+function positiveNumber(value: number | null | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return value > 0 ? value : fallback;
+}
+
 function nonNegativeInteger(value: number | null | undefined, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(0, Math.floor(value));
+}
+
+function unitFloat(value: number | null | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(value, 0), 1);
 }
 
 function clamp(value: number, min: number, max: number): number {
