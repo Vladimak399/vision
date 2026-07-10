@@ -1,7 +1,14 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { handleDetectorOnlyApiRequest } from "../server/price-capture/detector-only-api-boundary";
+import { handleDetectorOnlyApiRequest, type DetectorOnlyApiResponse } from "../server/price-capture/detector-only-api-boundary";
+import { createSharpHeuristicDetectorOnlyProcessor, type DetectorOnlyProcessingResult } from "../server/price-capture/detector-only-orchestrator";
+import { buildDetectorOnlyRunReport, type DetectorOnlyRunReportDto } from "../server/price-capture/detector-only-report";
+import type { EvidenceDraft, PriceCaptureRunContext } from "../server/price-capture/evidence-contract";
+import { createUnsupportedLocalOcrEngine } from "../server/price-capture/local-ocr";
+import type { PriceTagDetection } from "../server/price-capture/local-pipeline";
+import { mergeLocalOcrRunIntoEvidenceDrafts, type OcrEvidenceMergeMetrics } from "../server/price-capture/ocr-evidence";
+import { runLocalOcrForDraftItems, type LocalOcrDraftRunResult } from "../server/price-capture/ocr-crop";
 
 export type DetectorOnlyDebugCliOptions = {
   imagePath: string;
@@ -13,12 +20,28 @@ export type DetectorOnlyDebugCliOptions = {
   contentType: string | null;
   cropExtension: string | null;
   cropPaddingPixels: number;
+  withOcr: boolean;
   pretty: boolean;
 };
 
 export type DetectorOnlyDebugCliParseResult =
   | { ok: true; options: DetectorOnlyDebugCliOptions }
   | { ok: false; error: string };
+
+export type DetectorOnlyDebugOcrSection = {
+  mode: "unsupported-noop";
+  metrics: OcrEvidenceMergeMetrics;
+  skipped: LocalOcrDraftRunResult["skipped"];
+};
+
+export type DetectorOnlyDebugOcrResponse = {
+  ok: true;
+  statusCode: 200;
+  report: DetectorOnlyRunReportDto;
+  ocr: DetectorOnlyDebugOcrSection;
+};
+
+export type DetectorOnlyDebugResponse = DetectorOnlyApiResponse | DetectorOnlyDebugOcrResponse;
 
 const DEFAULT_COMPANY_ID = "local-debug-company";
 const DEFAULT_STORE_ID = "local-debug-store";
@@ -76,6 +99,7 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
       contentType: stringFlag(flags, "--content-type") ?? inferContentType(imagePath),
       cropExtension: stringFlag(flags, "--crop-extension") ?? inferCropExtension(imagePath),
       cropPaddingPixels,
+      withOcr: flags.has("--with-ocr") || flags.has("--ocr"),
       pretty: !flags.has("--compact"),
     },
   };
@@ -83,7 +107,18 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
 
 export async function runDetectorOnlyDebug(options: DetectorOnlyDebugCliOptions): Promise<string> {
   const bytes = await readFile(options.imagePath);
-  const response = await handleDetectorOnlyApiRequest({
+  const response = options.withOcr
+    ? await runDetectorOnlyDebugWithOcr(options, bytes)
+    : await runDetectorOnlyDebugWithoutOcr(options, bytes);
+
+  return JSON.stringify(response, null, options.pretty ? 2 : 0);
+}
+
+async function runDetectorOnlyDebugWithoutOcr(
+  options: DetectorOnlyDebugCliOptions,
+  bytes: Uint8Array,
+): Promise<DetectorOnlyApiResponse> {
+  return handleDetectorOnlyApiRequest({
     companyId: options.companyId,
     storeId: options.storeId,
     week: options.week,
@@ -100,8 +135,89 @@ export async function runDetectorOnlyDebug(options: DetectorOnlyDebugCliOptions)
       cropPadding: { pixels: options.cropPaddingPixels },
     },
   });
+}
 
-  return JSON.stringify(response, null, options.pretty ? 2 : 0);
+async function runDetectorOnlyDebugWithOcr(
+  options: DetectorOnlyDebugCliOptions,
+  bytes: Uint8Array,
+): Promise<DetectorOnlyDebugOcrResponse> {
+  const processor = createSharpHeuristicDetectorOnlyProcessor();
+  const processingResult = await processor.process({
+    context: buildContext(options),
+    image: {
+      bytes: new Uint8Array(bytes),
+      filename: path.basename(options.imagePath),
+      contentType: options.contentType,
+      storagePath: options.imagePath,
+    },
+    evidence: {
+      cropExtension: options.cropExtension,
+      cropPadding: { pixels: options.cropPaddingPixels },
+    },
+  });
+
+  const ocrRun = await runLocalOcrForDraftItems({
+    run: processingResult.run,
+    decodedImage: processingResult.detectorRun.pipeline.decodedImage,
+    items: processingResult.drafts.map((draft) => ({
+      draft,
+      detection: evidenceDraftToDetection(draft),
+    })),
+    ocr: createUnsupportedLocalOcrEngine({ diagnostics: { source: "detector-only-debug" } }),
+  });
+  const merged = mergeLocalOcrRunIntoEvidenceDrafts({
+    drafts: processingResult.drafts,
+    ocrRun,
+  });
+  const resultWithOcr = withMergedDrafts(processingResult, merged.drafts);
+
+  return {
+    ok: true,
+    statusCode: 200,
+    report: buildDetectorOnlyRunReport(resultWithOcr),
+    ocr: {
+      mode: "unsupported-noop",
+      metrics: merged.metrics,
+      skipped: ocrRun.skipped,
+    },
+  };
+}
+
+function buildContext(options: DetectorOnlyDebugCliOptions): PriceCaptureRunContext {
+  return {
+    companyId: options.companyId,
+    storeId: options.storeId,
+    week: options.week,
+    runId: options.runId,
+    capturedDate: options.capturedDate,
+    photoFilename: path.basename(options.imagePath),
+    photoStoragePath: options.imagePath,
+  };
+}
+
+function withMergedDrafts(
+  result: DetectorOnlyProcessingResult,
+  drafts: EvidenceDraft[],
+): DetectorOnlyProcessingResult {
+  return {
+    ...result,
+    drafts,
+    evidence: {
+      ...result.evidence,
+      drafts,
+    },
+  };
+}
+
+function evidenceDraftToDetection(draft: EvidenceDraft): PriceTagDetection {
+  return {
+    id: draft.itemId,
+    bbox: draft.row.bbox,
+    confidence: draft.row.detector_confidence,
+    provider: draft.row.detector_provider,
+    model: draft.row.detector_model,
+    label: "price_tag",
+  };
 }
 
 async function main(): Promise<void> {
@@ -166,6 +282,7 @@ function usage(reason: string): string {
     "  --content-type <mime>    Default: inferred from extension",
     "  --crop-extension <ext>   Default: inferred from extension",
     "  --crop-padding <pixels>  Default: 1",
+    "  --with-ocr              Run local no-op OCR over extracted crops and include OCR section",
     "  --compact                Print compact JSON",
   ].join("\n");
 }
