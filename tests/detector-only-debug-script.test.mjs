@@ -28,6 +28,8 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "server/price-capture/external-ocr-worker.ts",
   "server/price-capture/local-price-parser.ts",
   "server/price-capture/price-evidence.ts",
+  "server/price-capture/local-product-text-extractor.ts",
+  "server/price-capture/product-text-evidence.ts",
   "scripts/detector-only-debug.ts",
   "--outDir",
   ".tmp/detector-only-debug-script-test",
@@ -80,25 +82,27 @@ test("parses detector-only debug CLI arguments", () => {
     mockOcrText: null,
     mockOcrConfidence: null,
     parsePrice: false,
+    extractProductText: false,
     pretty: false,
   });
 });
 
-test("parses mock OCR worker and price parser debug flags", () => {
+test("parses mock OCR worker, price parser, and product text debug flags", () => {
   const parsed = parseDetectorOnlyDebugArgs([
     "./shelf.jpg",
     "--ocr-mode", "mock-worker",
-    "--mock-ocr-text", "Цена 99 90",
+    "--mock-ocr-text", "Кофе 3 в 1\nЦена 99 90",
     "--mock-ocr-confidence", "0.77",
-    "--parse-price",
+    "--extract-product-text",
   ]);
 
   assert.equal(parsed.ok, true);
   assert.equal(parsed.options.withOcr, true);
   assert.equal(parsed.options.ocrMode, "mock-worker");
-  assert.equal(parsed.options.mockOcrText, "Цена 99 90");
+  assert.equal(parsed.options.mockOcrText, "Кофе 3 в 1\nЦена 99 90");
   assert.equal(parsed.options.mockOcrConfidence, 0.77);
   assert.equal(parsed.options.parsePrice, true);
+  assert.equal(parsed.options.extractProductText, true);
 });
 
 test("returns usage errors for missing path or invalid options", () => {
@@ -150,6 +154,7 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
     mockOcrText: null,
     mockOcrConfidence: null,
     parsePrice: false,
+    extractProductText: false,
     pretty: false,
   });
 
@@ -168,6 +173,7 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
   assert.equal(response.report.summary.aiCostMicrousd, 0);
   assert.equal(response.report.summary.ocr.processedCount, 0);
   assert.equal(response.report.summary.price.pricedCount, 0);
+  assert.ok(response.report.summary.productText.unknownCount >= 1);
   assert.ok(response.report.summary.detectedCount >= 1);
   assert.ok(response.report.drafts.length >= 1);
   assert.equal(JSON.stringify(response).includes("bytes"), false);
@@ -192,6 +198,7 @@ test("runs debug script with mock OCR worker over extracted crops", async () => 
     mockOcrText: "Цена 99 90",
     mockOcrConfidence: 0.77,
     parsePrice: false,
+    extractProductText: false,
     pretty: false,
   });
 
@@ -228,6 +235,7 @@ test("runs debug script with mock OCR worker and parses price into report drafts
     mockOcrText: "Старая цена 129,90\nАкция 99,90",
     mockOcrConfidence: 0.88,
     parsePrice: true,
+    extractProductText: false,
     pretty: false,
   });
 
@@ -242,6 +250,44 @@ test("runs debug script with mock OCR worker and parses price into report drafts
   assert.equal(response.price.parsed[0].priceMinor, 9990);
   assert.equal(response.price.parsed[0].oldPriceMinor, 12990);
   assert.equal(response.price.parsed[0].promoPriceMinor, 9990);
+  assert.equal(JSON.stringify(response).includes("bytes"), false);
+});
+
+test("runs debug script with full mock OCR price and product text flow", async () => {
+  const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-product-text.png";
+  await writeFile(pngPath, await createSyntheticShelfPng());
+
+  const json = await runDetectorOnlyDebug({
+    imagePath: pngPath,
+    companyId: "company-debug",
+    storeId: "store-debug",
+    week: 1,
+    runId: "run-debug-product-text",
+    capturedDate: "2026-07-10",
+    contentType: "image/png",
+    cropExtension: "png",
+    cropPaddingPixels: 1,
+    withOcr: true,
+    ocrMode: "mock-worker",
+    mockOcrText: "Кофе Жокей Традиционный 250 г\nСтарая цена 129,90\nАкция 99,90",
+    mockOcrConfidence: 0.91,
+    parsePrice: true,
+    extractProductText: true,
+    pretty: false,
+  });
+
+  const response = JSON.parse(json);
+  assert.equal(response.ok, true);
+  assert.equal(response.price.parser, "ru-price-parser-heuristic-v1");
+  assert.equal(response.productText.extractor, "ru-product-text-extractor-heuristic-v1");
+  assert.ok(response.productText.metrics.mergedDraftCount >= 1);
+  assert.equal(response.report.summary.productText.namedCount, response.productText.metrics.namedDraftCount);
+  assert.equal(response.report.summary.productText.normalizedCount, response.productText.metrics.normalizedDraftCount);
+  assert.equal(response.report.drafts[0].product.priceMinor, 9990);
+  assert.equal(response.report.drafts[0].product.rawName, "Кофе Жокей Традиционный 250 г");
+  assert.equal(response.report.drafts[0].product.normalizedProductText, "кофе жокей традиционный 250 г");
+  assert.equal(response.productText.extracted[0].rawName, "Кофе Жокей Традиционный 250 г");
+  assert.equal(response.productText.extracted[0].normalizedProductText, "кофе жокей традиционный 250 г");
   assert.equal(JSON.stringify(response).includes("bytes"), false);
 });
 
