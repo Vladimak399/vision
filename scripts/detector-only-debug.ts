@@ -5,10 +5,13 @@ import { handleDetectorOnlyApiRequest, type DetectorOnlyApiResponse } from "../s
 import { createSharpHeuristicDetectorOnlyProcessor, type DetectorOnlyProcessingResult } from "../server/price-capture/detector-only-orchestrator";
 import { buildDetectorOnlyRunReport, type DetectorOnlyRunReportDto } from "../server/price-capture/detector-only-report";
 import type { EvidenceDraft, PriceCaptureRunContext } from "../server/price-capture/evidence-contract";
-import { createUnsupportedLocalOcrEngine } from "../server/price-capture/local-ocr";
+import { createExternalOcrWorkerEngine, createMockExternalOcrWorkerClient } from "../server/price-capture/external-ocr-worker";
+import { createUnsupportedLocalOcrEngine, type LocalOcrEngine } from "../server/price-capture/local-ocr";
 import type { PriceTagDetection } from "../server/price-capture/local-pipeline";
 import { mergeLocalOcrRunIntoEvidenceDrafts, type OcrEvidenceMergeMetrics } from "../server/price-capture/ocr-evidence";
 import { runLocalOcrForDraftItems, type LocalOcrDraftRunResult } from "../server/price-capture/ocr-crop";
+
+export type DetectorOnlyDebugOcrMode = "unsupported-noop" | "mock-worker";
 
 export type DetectorOnlyDebugCliOptions = {
   imagePath: string;
@@ -21,6 +24,9 @@ export type DetectorOnlyDebugCliOptions = {
   cropExtension: string | null;
   cropPaddingPixels: number;
   withOcr: boolean;
+  ocrMode: DetectorOnlyDebugOcrMode;
+  mockOcrText: string | null;
+  mockOcrConfidence: number | null;
   pretty: boolean;
 };
 
@@ -29,7 +35,7 @@ export type DetectorOnlyDebugCliParseResult =
   | { ok: false; error: string };
 
 export type DetectorOnlyDebugOcrSection = {
-  mode: "unsupported-noop";
+  mode: DetectorOnlyDebugOcrMode;
   metrics: OcrEvidenceMergeMetrics;
   skipped: LocalOcrDraftRunResult["skipped"];
 };
@@ -87,6 +93,17 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
     return { ok: false, error: usage("--crop-padding must be a non-negative integer") };
   }
 
+  const ocrMode = parseOcrMode(stringFlag(flags, "--ocr-mode") ?? "unsupported-noop");
+  if (!ocrMode) return { ok: false, error: usage("--ocr-mode must be unsupported-noop or mock-worker") };
+
+  const mockOcrConfidence = parseNullableUnitFloat(stringFlag(flags, "--mock-ocr-confidence"));
+  if (mockOcrConfidence === false) {
+    return { ok: false, error: usage("--mock-ocr-confidence must be a number from 0 to 1") };
+  }
+
+  const mockOcrText = stringFlag(flags, "--mock-ocr-text");
+  const withOcr = flags.has("--with-ocr") || flags.has("--ocr") || ocrMode === "mock-worker" || Boolean(mockOcrText);
+
   return {
     ok: true,
     options: {
@@ -99,7 +116,10 @@ export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCli
       contentType: stringFlag(flags, "--content-type") ?? inferContentType(imagePath),
       cropExtension: stringFlag(flags, "--crop-extension") ?? inferCropExtension(imagePath),
       cropPaddingPixels,
-      withOcr: flags.has("--with-ocr") || flags.has("--ocr"),
+      withOcr,
+      ocrMode,
+      mockOcrText,
+      mockOcrConfidence: mockOcrConfidence === null ? null : mockOcrConfidence,
       pretty: !flags.has("--compact"),
     },
   };
@@ -163,7 +183,7 @@ async function runDetectorOnlyDebugWithOcr(
       draft,
       detection: evidenceDraftToDetection(draft),
     })),
-    ocr: createUnsupportedLocalOcrEngine({ diagnostics: { source: "detector-only-debug" } }),
+    ocr: createDebugOcrEngine(options),
   });
   const merged = mergeLocalOcrRunIntoEvidenceDrafts({
     drafts: processingResult.drafts,
@@ -176,11 +196,25 @@ async function runDetectorOnlyDebugWithOcr(
     statusCode: 200,
     report: buildDetectorOnlyRunReport(resultWithOcr),
     ocr: {
-      mode: "unsupported-noop",
+      mode: options.ocrMode,
       metrics: merged.metrics,
       skipped: ocrRun.skipped,
     },
   };
+}
+
+function createDebugOcrEngine(options: DetectorOnlyDebugCliOptions): LocalOcrEngine {
+  if (options.ocrMode === "mock-worker") {
+    const client = createMockExternalOcrWorkerClient({
+      text: options.mockOcrText ?? "MOCK OCR 99 90",
+      confidence: options.mockOcrConfidence ?? 0.9,
+      diagnostics: { source: "detector-only-debug" },
+    });
+
+    return createExternalOcrWorkerEngine({ client });
+  }
+
+  return createUnsupportedLocalOcrEngine({ diagnostics: { source: "detector-only-debug" } });
 }
 
 function buildContext(options: DetectorOnlyDebugCliOptions): PriceCaptureRunContext {
@@ -261,9 +295,22 @@ function parseWeek(value: string): 1 | 2 | null {
   return null;
 }
 
+function parseOcrMode(value: string): DetectorOnlyDebugOcrMode | null {
+  if (value === "unsupported-noop" || value === "noop") return "unsupported-noop";
+  if (value === "mock-worker" || value === "mock") return "mock-worker";
+  return null;
+}
+
 function parseNonNegativeInteger(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
   return Number.parseInt(value, 10);
+}
+
+function parseNullableUnitFloat(value: string | null): number | null | false {
+  if (value === null) return null;
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) return false;
+  return parsed;
 }
 
 function usage(reason: string): string {
@@ -274,16 +321,19 @@ function usage(reason: string): string {
     "  npm run debug:detector-only -- ./photo.jpg [options]",
     "",
     "Options:",
-    "  --company-id <id>        Default: local-debug-company",
-    "  --store-id <id>          Default: local-debug-store",
-    "  --week <1|2>             Default: 1",
-    "  --run-id <id>            Default: local-debug-run",
-    "  --captured-date <date>   Default: today in YYYY-MM-DD",
-    "  --content-type <mime>    Default: inferred from extension",
-    "  --crop-extension <ext>   Default: inferred from extension",
-    "  --crop-padding <pixels>  Default: 1",
-    "  --with-ocr              Run local no-op OCR over extracted crops and include OCR section",
-    "  --compact                Print compact JSON",
+    "  --company-id <id>             Default: local-debug-company",
+    "  --store-id <id>               Default: local-debug-store",
+    "  --week <1|2>                  Default: 1",
+    "  --run-id <id>                 Default: local-debug-run",
+    "  --captured-date <date>        Default: today in YYYY-MM-DD",
+    "  --content-type <mime>         Default: inferred from extension",
+    "  --crop-extension <ext>        Default: inferred from extension",
+    "  --crop-padding <pixels>       Default: 1",
+    "  --with-ocr                   Run OCR over extracted crops and include OCR section",
+    "  --ocr-mode <mode>             unsupported-noop | mock-worker",
+    "  --mock-ocr-text <text>        Text returned by mock-worker OCR mode",
+    "  --mock-ocr-confidence <0..1>  Confidence returned by mock-worker OCR mode",
+    "  --compact                     Print compact JSON",
   ].join("\n");
 }
 
