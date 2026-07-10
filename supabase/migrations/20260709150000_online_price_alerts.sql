@@ -55,7 +55,7 @@ create index if not exists online_price_alerts_source_idx
 alter table public.online_price_alert_rules
   add column if not exists updated_at timestamptz not null default now();
 
-create trigger if not exists online_price_alert_rules_touch
+create trigger online_price_alert_rules_touch
   before update on public.online_price_alert_rules
   for each row execute function public.touch_updated_at();
 
@@ -63,13 +63,13 @@ create trigger if not exists online_price_alert_rules_touch
 alter table public.online_price_alert_rules enable row level security;
 alter table public.online_price_alerts enable row level security;
 
-create policy if not exists online_price_alert_rules_company_select
+create policy online_price_alert_rules_company_select
   on public.online_price_alert_rules for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_price_alert_rules_company_modify
+create policy online_price_alert_rules_company_modify
   on public.online_price_alert_rules for all
   using (company_id in (
     select cm.company_id from public.company_members cm
@@ -80,13 +80,13 @@ create policy if not exists online_price_alert_rules_company_modify
     where cm.user_id = auth.uid()
   ));
 
-create policy if not exists online_price_alerts_company_select
+create policy online_price_alerts_company_select
   on public.online_price_alerts for select
   using (company_id in (
     select cm.company_id from public.company_members cm
     where cm.user_id = auth.uid()
   ));
-create policy if not exists online_price_alerts_company_modify
+create policy online_price_alerts_company_modify
   on public.online_price_alerts for all
   using (company_id in (
     select cm.company_id from public.company_members cm

@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  Save,
   Shield,
   AlertTriangle,
   CheckCircle,
@@ -44,10 +43,9 @@ export default function OnlineSourceManagementPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
-  const [showLegalChecklist, setShowLegalChecklist] = useState<Record<string, boolean>>({});
 
   // Load sources
-  const loadSources = async () => {
+  const loadSources = useCallback(async () => {
     try {
       const res = await fetch("/api/online-monitoring/sources");
       if (!res.ok) throw new Error("Failed to load sources");
@@ -58,11 +56,11 @@ export default function OnlineSourceManagementPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useState(() => {
-    loadSources();
-  });
+  useEffect(() => {
+    void loadSources();
+  }, [loadSources]);
 
   const toggleExpand = (sourceId: string) => {
     setExpandedSources(prev => {
@@ -74,13 +72,6 @@ export default function OnlineSourceManagementPage() {
       }
       return next;
     });
-  };
-
-  const toggleLegalChecklist = (sourceId: string) => {
-    setShowLegalChecklist(prev => ({
-      ...prev,
-      [sourceId]: !prev[sourceId],
-    }));
   };
 
   const updateSource = async (sourceId: string, updates: Partial<Source>) => {
