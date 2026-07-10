@@ -239,6 +239,10 @@ test("runs debug script with mock OCR worker over extracted crops", async () => 
   assert.equal(response.ocr.metrics.ocrTextResultCount, response.ocr.metrics.mergedDraftCount);
   assert.equal(response.report.summary.ocr.textResultCount, response.ocr.metrics.mergedDraftCount);
   assert.equal(response.report.summary.price.pricedCount, 0);
+  assert.equal(response.ocr.items[0].status, "text");
+  assert.equal(response.ocr.items[0].provider, "mock-worker");
+  assert.equal(response.ocr.items[0].textPreview, "Цена 99 90");
+  assert.equal(response.ocr.items[0].diagnostics.source, "detector-only-debug");
   assert.equal(response.report.drafts[0].ocr.provider, "mock-worker");
   assert.equal(response.report.drafts[0].ocr.text, "Цена 99 90");
   assert.equal(response.report.drafts[0].ocr.confidence, 0.77);
@@ -380,13 +384,84 @@ test("runs debug script through RapidOCR HTTP worker mode using a fake HTTP work
     const response = JSON.parse(json);
     assert.equal(response.ok, true);
     assert.equal(response.ocr.mode, "rapidocr-worker");
+    assert.equal(response.ocr.diagnostics.workerUrl, "http://127.0.0.1:8765/ocr");
     assert.ok(calls.length >= 1);
+    assert.equal(response.ocr.items[0].status, "text");
+    assert.equal(response.ocr.items[0].provider, "rapidocr-worker");
+    assert.equal(response.ocr.items[0].diagnostics.source, "fake-http-worker");
     assert.equal(response.report.drafts[0].ocr.provider, "rapidocr-worker");
     assert.equal(response.report.drafts[0].ocr.confidence, 0.83);
     assert.equal(response.report.drafts[0].product.priceMinor, 9990);
     assert.equal(response.report.drafts[0].product.rawName, "Кофе Жокей Традиционный 250 г");
     assert.equal(response.report.drafts[0].product.normalizedProductText, "кофе жокей традиционный 250 г");
-    assert.equal(JSON.stringify(response).includes("bytes"), false);
+    assert.equal(JSON.stringify(response).includes("bytesBase64"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps RapidOCR worker failures visible in debug JSON", async () => {
+  const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-rapidocr-worker-failure.png";
+  await writeFile(pngPath, await createSyntheticShelfPng());
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      schemaVersion: "pricevision-ocr-worker-response-v1",
+      requestId: body.requestId,
+      ok: false,
+      provider: "rapidocr-worker",
+      model: "rapidocr-v1",
+      error: {
+        code: "rapidocr_unavailable",
+        message: "RapidOCR is unavailable in this worker process.",
+      },
+      diagnostics: {
+        traceback: "x".repeat(600),
+        bytesBase64: "should-not-leak",
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const json = await runDetectorOnlyDebug({
+      imagePath: pngPath,
+      companyId: "company-debug",
+      storeId: "store-debug",
+      week: 1,
+      runId: "run-debug-rapidocr-worker-failure",
+      capturedDate: "2026-07-10",
+      contentType: "image/png",
+      cropExtension: "png",
+      cropPaddingPixels: 1,
+      withOcr: true,
+      ocrMode: "rapidocr-worker",
+      ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
+      ocrWorkerTimeoutMs: 30000,
+      mockOcrText: null,
+      mockOcrConfidence: null,
+      parsePrice: true,
+      extractProductText: true,
+      pretty: false,
+    });
+
+    const response = JSON.parse(json);
+    assert.equal(response.ok, true);
+    assert.equal(response.ocr.mode, "rapidocr-worker");
+    assert.equal(response.ocr.items[0].status, "worker_error");
+    assert.equal(response.ocr.items[0].provider, "http-worker");
+    assert.equal(response.ocr.items[0].textPreview, null);
+    assert.equal(response.ocr.items[0].diagnostics.reason, "external_ocr_worker_failed");
+    assert.equal(response.ocr.items[0].diagnostics.errorCode, "rapidocr_unavailable");
+    assert.equal(response.ocr.items[0].diagnostics.bytesBase64, "[redacted]");
+    assert.match(response.ocr.items[0].diagnostics.traceback, /…$/);
+    assert.equal(response.report.summary.ocr.emptyResultCount, response.ocr.metrics.mergedDraftCount);
+    assert.equal(response.report.summary.price.pricedCount, 0);
+    assert.equal(JSON.stringify(response).includes("should-not-leak"), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
