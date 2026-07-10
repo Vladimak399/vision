@@ -123,5 +123,6 @@ test("returns env checklist without exposing actual keys", () => {
   assert.ok(checklist.some((line) => line.includes("NEXT_PUBLIC_SUPABASE_URL=")));
   assert.ok(checklist.some((line) => line.includes("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<paste")));
   assert.ok(checklist.some((line) => line.includes("SUPABASE_SERVICE_ROLE_KEY=<paste")));
+  assert.ok(checklist.some((line) => line.includes("PRICEVISION_EVIDENCE_CONTROLLED_TEST_ROW_CONFIRM=<leave unset")));
   assert.ok(checklist.every((line) => !line.includes("eyJhbGci")));
 });
