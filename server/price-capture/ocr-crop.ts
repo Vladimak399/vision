@@ -1,8 +1,17 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+
+import sharp from "sharp";
+
 import type { CropBBox, ImageDimensions } from "./crop-generator";
 import type { DecodedImagePixels, DecodedPixelFormat } from "./image-decoder";
 import type { EvidenceDraft, PriceCaptureRunContext } from "./evidence-contract";
 import type { LocalOcrEngine, LocalOcrResult } from "./local-ocr";
 import type { OcrInput, PriceCapturePhotoInput, PriceTagDetection } from "./local-pipeline";
+import {
+  buildOcrCropPreprocessPlan,
+  type OcrCropPreprocessOptions,
+} from "./ocr-crop-preprocess";
 
 export type OcrCropImage = {
   bytes: Uint8Array;
@@ -75,6 +84,7 @@ export type RunLocalOcrForDraftItemsInput = {
   decodedImage: DecodedImagePixels | null;
   items: OcrDraftItem[];
   ocr: LocalOcrEngine;
+  ocrCropPreprocess?: OcrCropPreprocessOptions | null;
 };
 
 export function createOcrCropImage(
@@ -152,7 +162,12 @@ export function buildOcrInputFromCropImage(input: {
     run: input.run,
     photo: ocrCropImageToPhotoInput(input.cropImage),
     detection: input.detection,
-    crop: input.draft.cropPlan,
+    crop: {
+      ...input.draft.cropPlan,
+      bbox: input.cropImage.sourceBBox,
+      cropWidth: input.cropImage.dimensions.width,
+      cropHeight: input.cropImage.dimensions.height,
+    },
   };
 }
 
@@ -176,11 +191,18 @@ export async function runLocalOcrForDraftItems(
     }
 
     try {
+      const cropImage = input.decodedImage && input.ocrCropPreprocess
+        ? await preprocessCropImage({
+          decodedImage: input.decodedImage,
+          original: extraction.cropImage,
+          options: input.ocrCropPreprocess,
+        })
+        : extraction.cropImage;
       const ocrInput = buildOcrInputFromCropImage({
         run: input.run,
         detection: item.detection,
         draft: item.draft,
-        cropImage: extraction.cropImage,
+        cropImage,
       });
       const ocr = await input.ocr.recognize(ocrInput);
       items.push({
@@ -188,7 +210,7 @@ export async function runLocalOcrForDraftItems(
         detectionId: emptyToNull(item.detection.id),
         detection: item.detection,
         draft: item.draft,
-        cropImage: extraction.cropImage,
+        cropImage,
         ocr,
       });
     } catch (error) {
@@ -213,6 +235,143 @@ export async function runLocalOcrForDraftItems(
       failedCount: skipped.filter((item) => item.reason === "ocr_failed").length,
     },
   };
+}
+
+async function preprocessCropImage(input: {
+  decodedImage: DecodedImagePixels;
+  original: OcrCropImage;
+  options: OcrCropPreprocessOptions;
+}): Promise<OcrCropImage> {
+  const channels = channelCount(input.decodedImage.pixelFormat);
+  if (!channels) return input.original;
+
+  const plan = buildOcrCropPreprocessPlan({
+    imageDimensions: input.decodedImage.dimensions,
+    originalBBox: input.original.sourceBBox,
+    options: input.options,
+  });
+  const expandedBytes = extractCropBytes(input.decodedImage, plan.expandedBBox);
+  if (!expandedBytes) return input.original;
+
+  const resized = await resizeRawCrop({
+    bytes: expandedBytes,
+    width: plan.expandedBBox.width,
+    height: plan.expandedBBox.height,
+    channels,
+    outputWidth: plan.ocrInputWidth,
+    outputHeight: plan.ocrInputHeight,
+  });
+  const pixelFormat = pixelFormatFromChannels(resized.channels);
+  const dumpPaths = await maybeDumpCrops({
+    options: input.options,
+    itemId: input.original.itemId,
+    sourceImageStem: input.options.sourceImageStem ?? stemFromFilename(input.decodedImage.filename) ?? "photo",
+    original: {
+      bytes: input.original.bytes,
+      width: input.original.dimensions.width,
+      height: input.original.dimensions.height,
+      channels,
+    },
+    ocrInput: {
+      bytes: resized.bytes,
+      width: resized.width,
+      height: resized.height,
+      channels: resized.channels,
+    },
+  });
+
+  return {
+    ...input.original,
+    bytes: resized.bytes,
+    dimensions: { width: resized.width, height: resized.height },
+    pixelFormat,
+    sourceBBox: plan.expandedBBox,
+    contentType: rawPixelContentType(pixelFormat),
+    diagnostics: {
+      ...input.original.diagnostics,
+      cropDiagnostics: {
+        originalBBox: plan.originalBBox,
+        expandedBBox: plan.expandedBBox,
+        originalWidth: plan.originalWidth,
+        originalHeight: plan.originalHeight,
+        expandedWidth: plan.expandedWidth,
+        expandedHeight: plan.expandedHeight,
+        ocrInputWidth: resized.width,
+        ocrInputHeight: resized.height,
+        upscaleFactor: plan.upscaleFactor,
+        paddingPx: plan.paddingPx,
+        isProbablyTooSmallForOcr: plan.isProbablyTooSmallForOcr,
+        wasExpanded: plan.wasExpanded,
+        wasUpscaled: plan.wasUpscaled,
+        reviewReason: plan.reviewReason,
+        ...dumpPaths,
+      },
+    },
+  };
+}
+
+async function resizeRawCrop(input: {
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+  channels: 1 | 3 | 4;
+  outputWidth: number;
+  outputHeight: number;
+}): Promise<{ bytes: Uint8Array; width: number; height: number; channels: 1 | 3 | 4 }> {
+  if (input.width === input.outputWidth && input.height === input.outputHeight) {
+    return { bytes: input.bytes, width: input.width, height: input.height, channels: input.channels };
+  }
+
+  const result = await sharp(input.bytes, {
+    raw: {
+      width: input.width,
+      height: input.height,
+      channels: input.channels,
+    },
+  })
+    .resize(input.outputWidth, input.outputHeight, { fit: "fill", kernel: "lanczos3" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  return {
+    bytes: new Uint8Array(result.data),
+    width: result.info.width,
+    height: result.info.height,
+    channels: normalizeSharpChannels(result.info.channels),
+  };
+}
+
+async function maybeDumpCrops(input: {
+  options: OcrCropPreprocessOptions;
+  itemId: string;
+  sourceImageStem: string;
+  original: { bytes: Uint8Array; width: number; height: number; channels: 1 | 3 | 4 };
+  ocrInput: { bytes: Uint8Array; width: number; height: number; channels: 1 | 3 | 4 };
+}): Promise<{ dumpOriginalPath: string | null; dumpOcrInputPath: string | null }> {
+  if (input.options.dumpCrops !== true) return { dumpOriginalPath: null, dumpOcrInputPath: null };
+  const dumpRoot = typeof input.options.cropDumpDir === "string" && input.options.cropDumpDir.trim()
+    ? input.options.cropDumpDir.trim()
+    : "tmp/real-photo-runs/crops";
+  const dir = path.join(dumpRoot, sanitizePathPart(input.sourceImageStem));
+  await mkdir(dir, { recursive: true });
+  const itemId = sanitizePathPart(input.itemId);
+  const dumpOriginalPath = path.join(dir, `${itemId}.original.png`);
+  const dumpOcrInputPath = path.join(dir, `${itemId}.ocr-input.png`);
+  await dumpRawPng(input.original, dumpOriginalPath);
+  await dumpRawPng(input.ocrInput, dumpOcrInputPath);
+  return { dumpOriginalPath, dumpOcrInputPath };
+}
+
+async function dumpRawPng(input: { bytes: Uint8Array; width: number; height: number; channels: 1 | 3 | 4 }, outputPath: string): Promise<void> {
+  await sharp(input.bytes, {
+    raw: {
+      width: input.width,
+      height: input.height,
+      channels: input.channels,
+    },
+  })
+    .png()
+    .toFile(outputPath);
 }
 
 function extractCropBytes(image: DecodedImagePixels, bbox: CropBBox): Uint8Array | null {
@@ -298,12 +457,33 @@ function rawPixelContentType(pixelFormat: DecodedPixelFormat): string {
   return `application/x-pricevision-raw-${pixelFormat}`;
 }
 
+function pixelFormatFromChannels(channels: number): DecodedPixelFormat {
+  if (channels === 1) return "grayscale";
+  if (channels === 3) return "rgb";
+  return "rgba";
+}
+
+function normalizeSharpChannels(value: number): 1 | 3 | 4 {
+  if (value === 1 || value === 3 || value === 4) return value;
+  return value <= 1 ? 1 : value <= 3 ? 3 : 4;
+}
+
 function filenameFromPath(value: string | null): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   if (!normalized) return null;
   const parts = normalized.split(/[\\/]+/g);
   return parts[parts.length - 1] || null;
+}
+
+function stemFromFilename(value?: string | null): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  return path.parse(value).name || null;
+}
+
+function sanitizePathPart(value: string): string {
+  const normalized = value.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || "item";
 }
 
 function positiveInteger(value: number): number | null {

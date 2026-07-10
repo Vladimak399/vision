@@ -23,6 +23,7 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "server/price-capture/detector-only-report.ts",
   "server/price-capture/detector-only-api-boundary.ts",
   "server/price-capture/local-ocr.ts",
+  "server/price-capture/ocr-crop-preprocess.ts",
   "server/price-capture/ocr-crop.ts",
   "server/price-capture/ocr-evidence.ts",
   "server/price-capture/external-ocr-worker.ts",
@@ -86,8 +87,24 @@ test("parses detector-only debug CLI arguments", () => {
     mockOcrConfidence: null,
     parsePrice: false,
     extractProductText: false,
+    dumpCrops: false,
+    cropDumpDir: "tmp/real-photo-runs/crops",
     pretty: false,
   });
+});
+
+test("parses crop dump debug flags", () => {
+  const parsed = parseDetectorOnlyDebugArgs([
+    "./shelf.jpg",
+    "--ocr-mode", "rapidocr-worker",
+    "--dump-crops",
+    "--crop-dump-dir", "tmp/custom-crops",
+  ]);
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.options.withOcr, true);
+  assert.equal(parsed.options.dumpCrops, true);
+  assert.equal(parsed.options.cropDumpDir, "tmp/custom-crops");
 });
 
 test("parses mock OCR worker, price parser, and product text debug flags", () => {
@@ -164,26 +181,13 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
   const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf.png";
   await writeFile(pngPath, await createSyntheticShelfPng());
 
-  const json = await runDetectorOnlyDebug({
+  const json = await runDetectorOnlyDebug(baseOptions({
     imagePath: pngPath,
     companyId: "company-debug",
     storeId: "store-debug",
-    week: 1,
     runId: "run-debug-1",
-    capturedDate: "2026-07-10",
-    contentType: "image/png",
-    cropExtension: "png",
-    cropPaddingPixels: 1,
     withOcr: false,
-    ocrMode: "unsupported-noop",
-    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
-    ocrWorkerTimeoutMs: 30000,
-    mockOcrText: null,
-    mockOcrConfidence: null,
-    parsePrice: false,
-    extractProductText: false,
-    pretty: false,
-  });
+  }));
 
   const response = JSON.parse(json);
   assert.equal(response.ok, true);
@@ -210,26 +214,14 @@ test("runs debug script with mock OCR worker over extracted crops", async () => 
   const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-mock-ocr.png";
   await writeFile(pngPath, await createSyntheticShelfPng());
 
-  const json = await runDetectorOnlyDebug({
+  const json = await runDetectorOnlyDebug(baseOptions({
     imagePath: pngPath,
-    companyId: "company-debug",
-    storeId: "store-debug",
-    week: 1,
     runId: "run-debug-mock-ocr",
-    capturedDate: "2026-07-10",
-    contentType: "image/png",
-    cropExtension: "png",
-    cropPaddingPixels: 1,
     withOcr: true,
     ocrMode: "mock-worker",
-    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
-    ocrWorkerTimeoutMs: 30000,
     mockOcrText: "Цена 99 90",
     mockOcrConfidence: 0.77,
-    parsePrice: false,
-    extractProductText: false,
-    pretty: false,
-  });
+  }));
 
   const response = JSON.parse(json);
   assert.equal(response.ok, true);
@@ -243,6 +235,7 @@ test("runs debug script with mock OCR worker over extracted crops", async () => 
   assert.equal(response.ocr.items[0].provider, "mock-worker");
   assert.equal(response.ocr.items[0].textPreview, "Цена 99 90");
   assert.equal(response.ocr.items[0].diagnostics.source, "detector-only-debug");
+  assert.equal(response.ocr.items[0].cropDiagnostics.ocrInputWidth >= 320, true);
   assert.equal(response.report.drafts[0].ocr.provider, "mock-worker");
   assert.equal(response.report.drafts[0].ocr.text, "Цена 99 90");
   assert.equal(response.report.drafts[0].ocr.confidence, 0.77);
@@ -253,26 +246,15 @@ test("runs debug script with mock OCR worker and parses price into report drafts
   const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-price-parser.png";
   await writeFile(pngPath, await createSyntheticShelfPng());
 
-  const json = await runDetectorOnlyDebug({
+  const json = await runDetectorOnlyDebug(baseOptions({
     imagePath: pngPath,
-    companyId: "company-debug",
-    storeId: "store-debug",
-    week: 1,
     runId: "run-debug-price-parser",
-    capturedDate: "2026-07-10",
-    contentType: "image/png",
-    cropExtension: "png",
-    cropPaddingPixels: 1,
     withOcr: true,
     ocrMode: "mock-worker",
-    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
-    ocrWorkerTimeoutMs: 30000,
     mockOcrText: "Старая цена 129,90\nАкция 99,90",
     mockOcrConfidence: 0.88,
     parsePrice: true,
-    extractProductText: false,
-    pretty: false,
-  });
+  }));
 
   const response = JSON.parse(json);
   assert.equal(response.ok, true);
@@ -292,26 +274,16 @@ test("runs debug script with full mock OCR price and product text flow", async (
   const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-product-text.png";
   await writeFile(pngPath, await createSyntheticShelfPng());
 
-  const json = await runDetectorOnlyDebug({
+  const json = await runDetectorOnlyDebug(baseOptions({
     imagePath: pngPath,
-    companyId: "company-debug",
-    storeId: "store-debug",
-    week: 1,
     runId: "run-debug-product-text",
-    capturedDate: "2026-07-10",
-    contentType: "image/png",
-    cropExtension: "png",
-    cropPaddingPixels: 1,
     withOcr: true,
     ocrMode: "mock-worker",
-    ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
-    ocrWorkerTimeoutMs: 30000,
     mockOcrText: "Кофе Жокей Традиционный 250 г\nСтарая цена 129,90\nАкция 99,90",
     mockOcrConfidence: 0.91,
     parsePrice: true,
     extractProductText: true,
-    pretty: false,
-  });
+  }));
 
   const response = JSON.parse(json);
   assert.equal(response.ok, true);
@@ -339,7 +311,9 @@ test("runs debug script through RapidOCR HTTP worker mode using a fake HTTP work
     calls.push({ url, body });
 
     assert.equal(body.schemaVersion, "pricevision-ocr-worker-request-v1");
-    assert.equal(body.image.pixelFormat, "rgba");
+    assert.ok(["rgb", "rgba"].includes(body.image.pixelFormat));
+    assert.ok(body.image.width >= 320);
+    assert.ok(body.image.height >= 80);
     assert.ok(body.image.bytesBase64.length > 0);
     assert.equal(body.context.companyId, "company-debug");
 
@@ -360,26 +334,14 @@ test("runs debug script through RapidOCR HTTP worker mode using a fake HTTP work
   };
 
   try {
-    const json = await runDetectorOnlyDebug({
+    const json = await runDetectorOnlyDebug(baseOptions({
       imagePath: pngPath,
-      companyId: "company-debug",
-      storeId: "store-debug",
-      week: 1,
       runId: "run-debug-rapidocr-worker",
-      capturedDate: "2026-07-10",
-      contentType: "image/png",
-      cropExtension: "png",
-      cropPaddingPixels: 1,
       withOcr: true,
       ocrMode: "rapidocr-worker",
-      ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
-      ocrWorkerTimeoutMs: 30000,
-      mockOcrText: null,
-      mockOcrConfidence: null,
       parsePrice: true,
       extractProductText: true,
-      pretty: false,
-    });
+    }));
 
     const response = JSON.parse(json);
     assert.equal(response.ok, true);
@@ -389,6 +351,7 @@ test("runs debug script through RapidOCR HTTP worker mode using a fake HTTP work
     assert.equal(response.ocr.items[0].status, "text");
     assert.equal(response.ocr.items[0].provider, "rapidocr-worker");
     assert.equal(response.ocr.items[0].diagnostics.source, "fake-http-worker");
+    assert.equal(response.ocr.items[0].cropDiagnostics.ocrInputWidth >= 320, true);
     assert.equal(response.report.drafts[0].ocr.provider, "rapidocr-worker");
     assert.equal(response.report.drafts[0].ocr.confidence, 0.83);
     assert.equal(response.report.drafts[0].product.priceMinor, 9990);
@@ -428,26 +391,14 @@ test("keeps RapidOCR worker failures visible in debug JSON", async () => {
   };
 
   try {
-    const json = await runDetectorOnlyDebug({
+    const json = await runDetectorOnlyDebug(baseOptions({
       imagePath: pngPath,
-      companyId: "company-debug",
-      storeId: "store-debug",
-      week: 1,
       runId: "run-debug-rapidocr-worker-failure",
-      capturedDate: "2026-07-10",
-      contentType: "image/png",
-      cropExtension: "png",
-      cropPaddingPixels: 1,
       withOcr: true,
       ocrMode: "rapidocr-worker",
-      ocrWorkerUrl: "http://127.0.0.1:8765/ocr",
-      ocrWorkerTimeoutMs: 30000,
-      mockOcrText: null,
-      mockOcrConfidence: null,
       parsePrice: true,
       extractProductText: true,
-      pretty: false,
-    });
+    }));
 
     const response = JSON.parse(json);
     assert.equal(response.ok, true);
@@ -466,6 +417,31 @@ test("keeps RapidOCR worker failures visible in debug JSON", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+function baseOptions(overrides = {}) {
+  return {
+    imagePath: overrides.imagePath,
+    companyId: overrides.companyId ?? "company-debug",
+    storeId: overrides.storeId ?? "store-debug",
+    week: overrides.week ?? 1,
+    runId: overrides.runId ?? "run-debug",
+    capturedDate: overrides.capturedDate ?? "2026-07-10",
+    contentType: overrides.contentType ?? "image/png",
+    cropExtension: overrides.cropExtension ?? "png",
+    cropPaddingPixels: overrides.cropPaddingPixels ?? 1,
+    withOcr: overrides.withOcr ?? false,
+    ocrMode: overrides.ocrMode ?? "unsupported-noop",
+    ocrWorkerUrl: overrides.ocrWorkerUrl ?? "http://127.0.0.1:8765/ocr",
+    ocrWorkerTimeoutMs: overrides.ocrWorkerTimeoutMs ?? 30000,
+    mockOcrText: overrides.mockOcrText ?? null,
+    mockOcrConfidence: overrides.mockOcrConfidence ?? null,
+    parsePrice: overrides.parsePrice ?? false,
+    extractProductText: overrides.extractProductText ?? false,
+    dumpCrops: overrides.dumpCrops ?? false,
+    cropDumpDir: overrides.cropDumpDir ?? "tmp/real-photo-runs/crops",
+    pretty: overrides.pretty ?? false,
+  };
+}
 
 async function createSyntheticShelfPng() {
   const svg = `
