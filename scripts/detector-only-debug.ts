@@ -17,6 +17,7 @@ import { mergeParsedPricesIntoEvidenceDrafts, type ParsedPriceEvidenceMergeMetri
 import { mergeProductTextsIntoEvidenceDrafts, type ProductTextEvidenceMergeMetrics } from "../server/price-capture/product-text-evidence";
 
 export type DetectorOnlyDebugOcrMode = "unsupported-noop" | "mock-worker" | "rapidocr-worker";
+export type DetectorOnlyDebugOcrItemStatus = "text" | "empty" | "worker_error" | "unsupported";
 
 export type DetectorOnlyDebugCliOptions = {
   imagePath: string;
@@ -43,10 +44,36 @@ export type DetectorOnlyDebugCliParseResult =
   | { ok: true; options: DetectorOnlyDebugCliOptions }
   | { ok: false; error: string };
 
+export type DetectorOnlyDebugOcrItem = {
+  itemId: string;
+  detectionId: string | null;
+  provider: string;
+  model: string;
+  status: DetectorOnlyDebugOcrItemStatus;
+  textLength: number;
+  textPreview: string | null;
+  confidence: number | null;
+  blockCount: number;
+  diagnostics: Record<string, unknown> | null;
+};
+
+export type DetectorOnlyDebugSkippedOcrItem = {
+  itemId: string;
+  detectionId: string | null;
+  reason: string;
+  errorMessage: string;
+  diagnostics: Record<string, unknown> | null;
+};
+
 export type DetectorOnlyDebugOcrSection = {
   mode: DetectorOnlyDebugOcrMode;
   metrics: OcrEvidenceMergeMetrics;
-  skipped: LocalOcrDraftRunResult["skipped"];
+  skipped: DetectorOnlyDebugSkippedOcrItem[];
+  items: DetectorOnlyDebugOcrItem[];
+  diagnostics: {
+    workerUrl: string | null;
+    timeoutMs: number | null;
+  };
 };
 
 export type DetectorOnlyDebugPriceSection = {
@@ -89,6 +116,11 @@ const DEFAULT_RUN_ID = "local-debug-run";
 const DEFAULT_CROP_PADDING_PIXELS = 1;
 const DEFAULT_OCR_WORKER_URL = "http://127.0.0.1:8765/ocr";
 const DEFAULT_OCR_WORKER_TIMEOUT_MS = 30_000;
+const TEXT_PREVIEW_MAX_LENGTH = 160;
+const DIAGNOSTICS_MAX_DEPTH = 4;
+const DIAGNOSTICS_MAX_KEYS = 24;
+const DIAGNOSTICS_MAX_STRING_LENGTH = 240;
+const DIAGNOSTICS_MAX_ARRAY_LENGTH = 12;
 
 export function parseDetectorOnlyDebugArgs(argv: string[]): DetectorOnlyDebugCliParseResult {
   const flags = new Map<string, string | true>();
@@ -301,13 +333,43 @@ async function runDetectorOnlyDebugWithOcr(
     ok: true,
     statusCode: 200,
     report: buildDetectorOnlyRunReport(result),
-    ocr: {
-      mode: options.ocrMode,
-      metrics: ocrMerged.metrics,
-      skipped: ocrRun.skipped,
-    },
+    ocr: buildDebugOcrSection(options, ocrRun, ocrMerged.metrics),
     ...(price ? { price } : {}),
     ...(productText ? { productText } : {}),
+  };
+}
+
+function buildDebugOcrSection(
+  options: DetectorOnlyDebugCliOptions,
+  ocrRun: LocalOcrDraftRunResult,
+  metrics: OcrEvidenceMergeMetrics,
+): DetectorOnlyDebugOcrSection {
+  return {
+    mode: options.ocrMode,
+    metrics,
+    skipped: ocrRun.skipped.map((item) => ({
+      itemId: item.itemId,
+      detectionId: item.detectionId,
+      reason: item.reason,
+      errorMessage: item.errorMessage,
+      diagnostics: sanitizeDiagnostics(item.diagnostics),
+    })),
+    items: ocrRun.items.map((item) => ({
+      itemId: item.itemId,
+      detectionId: item.detectionId,
+      provider: item.ocr.provider,
+      model: item.ocr.model,
+      status: resolveOcrItemStatus(item.ocr),
+      textLength: item.ocr.text.length,
+      textPreview: textPreview(item.ocr.text),
+      confidence: typeof item.ocr.confidence === "number" ? item.ocr.confidence : null,
+      blockCount: item.ocr.blocks.length,
+      diagnostics: sanitizeDiagnostics(item.ocr.diagnostics),
+    })),
+    diagnostics: {
+      workerUrl: options.ocrMode === "rapidocr-worker" ? options.ocrWorkerUrl : null,
+      timeoutMs: options.ocrMode === "rapidocr-worker" ? options.ocrWorkerTimeoutMs : null,
+    },
   };
 }
 
@@ -416,6 +478,59 @@ function evidenceDraftToDetection(draft: EvidenceDraft): PriceTagDetection {
     model: draft.row.detector_model,
     label: "price_tag",
   };
+}
+
+function resolveOcrItemStatus(ocr: LocalOcrDraftRunResult["items"][number]["ocr"]): DetectorOnlyDebugOcrItemStatus {
+  const reason = typeof ocr.diagnostics?.reason === "string" ? ocr.diagnostics.reason : null;
+  if (reason === "external_ocr_worker_failed") return "worker_error";
+  if (reason === "unsupported_local_ocr") return "unsupported";
+  if (ocr.isEmpty) return "empty";
+  return "text";
+}
+
+function textPreview(text: string): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  if (normalized.length <= TEXT_PREVIEW_MAX_LENGTH) return normalized;
+  return `${normalized.slice(0, TEXT_PREVIEW_MAX_LENGTH - 1).trim()}…`;
+}
+
+function sanitizeDiagnostics(value: unknown): Record<string, unknown> | null {
+  const sanitized = sanitizeDiagnosticValue(value, 0);
+  if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) return null;
+  return sanitized as Record<string, unknown>;
+}
+
+function sanitizeDiagnosticValue(value: unknown, depth: number): unknown {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return truncateDiagnosticString(value);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    if (depth >= DIAGNOSTICS_MAX_DEPTH) return `[array:${value.length}]`;
+    return value.slice(0, DIAGNOSTICS_MAX_ARRAY_LENGTH).map((item) => sanitizeDiagnosticValue(item, depth + 1));
+  }
+  if (typeof value === "object") {
+    if (depth >= DIAGNOSTICS_MAX_DEPTH) return "[object]";
+    const output: Record<string, unknown> = {};
+    let count = 0;
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (key.toLowerCase().includes("bytes") || key.toLowerCase().includes("base64")) {
+        output[key] = "[redacted]";
+        continue;
+      }
+      output[key] = sanitizeDiagnosticValue(nested, depth + 1);
+      count += 1;
+      if (count >= DIAGNOSTICS_MAX_KEYS) break;
+    }
+    return output;
+  }
+  return String(value);
+}
+
+function truncateDiagnosticString(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= DIAGNOSTICS_MAX_STRING_LENGTH) return normalized;
+  return `${normalized.slice(0, DIAGNOSTICS_MAX_STRING_LENGTH - 1).trim()}…`;
 }
 
 async function main(): Promise<void> {
