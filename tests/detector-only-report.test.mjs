@@ -69,7 +69,14 @@ function baseProcessingResult(overrides = {}) {
         raw_name: "unknown",
         normalized_product_text: null,
         price_minor: null,
+        old_price_minor: null,
+        promo_price_minor: null,
+        parsed_price_confidence: null,
         currency: "RUB",
+        ocr_provider: null,
+        ocr_model: null,
+        ocr_text: null,
+        ocr_confidence: null,
       },
     },
   ];
@@ -150,6 +157,8 @@ test("builds compact detector-only report DTO", () => {
   assert.equal(report.summary.statusReason, "ok");
   assert.equal(report.summary.aiUsedCount, 0);
   assert.equal(report.summary.aiCostMicrousd, 0);
+  assert.deepEqual(report.summary.ocr, { processedCount: 0, textResultCount: 0, emptyResultCount: 0 });
+  assert.deepEqual(report.summary.price, { parsedCount: 0, pricedCount: 0, oldPriceCount: 0, promoPriceCount: 0 });
 
   assert.deepEqual(report.detections, [
     {
@@ -189,6 +198,9 @@ test("builds compact detector-only report DTO", () => {
         rawName: "unknown",
         normalizedProductText: null,
         priceMinor: null,
+        oldPriceMinor: null,
+        promoPriceMinor: null,
+        parsedPriceConfidence: null,
         currency: "RUB",
       },
     },
@@ -198,6 +210,51 @@ test("builds compact detector-only report DTO", () => {
     { index: 0, step: "decode_image", status: "completed", durationMs: 3, errorMessage: null },
     { index: 1, step: "detect", status: "completed", durationMs: 5, errorMessage: null },
   ]);
+});
+
+test("reports price summary and product price fields when parsed price evidence exists", () => {
+  const report = buildDetectorOnlyRunReport(baseProcessingResult({
+    drafts: [
+      {
+        itemId: "det-priced",
+        row: {
+          bbox: { x: 1, y: 2, width: 30, height: 12 },
+          crop_storage_path: "evidence/company/runs/run/crops/det-priced.png",
+          crop_width: 30,
+          crop_height: 12,
+          detector_provider: "test-detector",
+          detector_model: "test-detector-v1",
+          detector_confidence: 0.8,
+          review_status: "pending",
+          review_reason: "awaiting_local_ocr_or_match",
+          ai_used: false,
+          raw_name: "Цена 99 90",
+          normalized_product_text: null,
+          price_minor: 9990,
+          old_price_minor: 12990,
+          promo_price_minor: 9990,
+          parsed_price_confidence: 0.74,
+          currency: "RUB",
+          ocr_provider: "mock-worker",
+          ocr_model: "mock-ocr-worker-v1",
+          ocr_text: "Цена 99 90",
+          ocr_confidence: 0.77,
+        },
+      },
+    ],
+  }));
+
+  assert.deepEqual(report.summary.price, {
+    parsedCount: 1,
+    pricedCount: 1,
+    oldPriceCount: 1,
+    promoPriceCount: 1,
+  });
+  assert.equal(report.drafts[0].product.priceMinor, 9990);
+  assert.equal(report.drafts[0].product.oldPriceMinor, 12990);
+  assert.equal(report.drafts[0].product.promoPriceMinor, 9990);
+  assert.equal(report.drafts[0].product.parsedPriceConfidence, 0.74);
+  assert.equal(report.drafts[0].ocr.text, "Цена 99 90");
 });
 
 test("reports status reasons for decode failures, skipped crops, and empty detection runs", () => {

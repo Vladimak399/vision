@@ -26,6 +26,8 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "server/price-capture/ocr-crop.ts",
   "server/price-capture/ocr-evidence.ts",
   "server/price-capture/external-ocr-worker.ts",
+  "server/price-capture/local-price-parser.ts",
+  "server/price-capture/price-evidence.ts",
   "scripts/detector-only-debug.ts",
   "--outDir",
   ".tmp/detector-only-debug-script-test",
@@ -77,16 +79,18 @@ test("parses detector-only debug CLI arguments", () => {
     ocrMode: "unsupported-noop",
     mockOcrText: null,
     mockOcrConfidence: null,
+    parsePrice: false,
     pretty: false,
   });
 });
 
-test("parses mock OCR worker debug flags", () => {
+test("parses mock OCR worker and price parser debug flags", () => {
   const parsed = parseDetectorOnlyDebugArgs([
     "./shelf.jpg",
     "--ocr-mode", "mock-worker",
     "--mock-ocr-text", "Цена 99 90",
     "--mock-ocr-confidence", "0.77",
+    "--parse-price",
   ]);
 
   assert.equal(parsed.ok, true);
@@ -94,6 +98,7 @@ test("parses mock OCR worker debug flags", () => {
   assert.equal(parsed.options.ocrMode, "mock-worker");
   assert.equal(parsed.options.mockOcrText, "Цена 99 90");
   assert.equal(parsed.options.mockOcrConfidence, 0.77);
+  assert.equal(parsed.options.parsePrice, true);
 });
 
 test("returns usage errors for missing path or invalid options", () => {
@@ -144,6 +149,7 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
     ocrMode: "unsupported-noop",
     mockOcrText: null,
     mockOcrConfidence: null,
+    parsePrice: false,
     pretty: false,
   });
 
@@ -161,6 +167,7 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
   assert.equal(response.report.summary.aiUsedCount, 0);
   assert.equal(response.report.summary.aiCostMicrousd, 0);
   assert.equal(response.report.summary.ocr.processedCount, 0);
+  assert.equal(response.report.summary.price.pricedCount, 0);
   assert.ok(response.report.summary.detectedCount >= 1);
   assert.ok(response.report.drafts.length >= 1);
   assert.equal(JSON.stringify(response).includes("bytes"), false);
@@ -184,6 +191,7 @@ test("runs debug script with mock OCR worker over extracted crops", async () => 
     ocrMode: "mock-worker",
     mockOcrText: "Цена 99 90",
     mockOcrConfidence: 0.77,
+    parsePrice: false,
     pretty: false,
   });
 
@@ -194,9 +202,46 @@ test("runs debug script with mock OCR worker over extracted crops", async () => 
   assert.ok(response.ocr.metrics.mergedDraftCount >= 1);
   assert.equal(response.ocr.metrics.ocrTextResultCount, response.ocr.metrics.mergedDraftCount);
   assert.equal(response.report.summary.ocr.textResultCount, response.ocr.metrics.mergedDraftCount);
+  assert.equal(response.report.summary.price.pricedCount, 0);
   assert.equal(response.report.drafts[0].ocr.provider, "mock-worker");
   assert.equal(response.report.drafts[0].ocr.text, "Цена 99 90");
   assert.equal(response.report.drafts[0].ocr.confidence, 0.77);
+  assert.equal(JSON.stringify(response).includes("bytes"), false);
+});
+
+test("runs debug script with mock OCR worker and parses price into report drafts", async () => {
+  const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-price-parser.png";
+  await writeFile(pngPath, await createSyntheticShelfPng());
+
+  const json = await runDetectorOnlyDebug({
+    imagePath: pngPath,
+    companyId: "company-debug",
+    storeId: "store-debug",
+    week: 1,
+    runId: "run-debug-price-parser",
+    capturedDate: "2026-07-10",
+    contentType: "image/png",
+    cropExtension: "png",
+    cropPaddingPixels: 1,
+    withOcr: true,
+    ocrMode: "mock-worker",
+    mockOcrText: "Старая цена 129,90\nАкция 99,90",
+    mockOcrConfidence: 0.88,
+    parsePrice: true,
+    pretty: false,
+  });
+
+  const response = JSON.parse(json);
+  assert.equal(response.ok, true);
+  assert.equal(response.price.parser, "ru-price-parser-heuristic-v1");
+  assert.ok(response.price.metrics.mergedDraftCount >= 1);
+  assert.equal(response.report.summary.price.pricedCount, response.price.metrics.mergedDraftCount);
+  assert.equal(response.report.drafts[0].product.priceMinor, 9990);
+  assert.equal(response.report.drafts[0].product.oldPriceMinor, 12990);
+  assert.equal(response.report.drafts[0].product.promoPriceMinor, 9990);
+  assert.equal(response.price.parsed[0].priceMinor, 9990);
+  assert.equal(response.price.parsed[0].oldPriceMinor, 12990);
+  assert.equal(response.price.parsed[0].promoPriceMinor, 9990);
   assert.equal(JSON.stringify(response).includes("bytes"), false);
 });
 
