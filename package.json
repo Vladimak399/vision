@@ -7,7 +7,7 @@
     "build": "next build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/catalog-matching.test.mjs tests/crop-generator.test.mjs tests/crop-storage.test.mjs tests/evidence-contract.test.mjs tests/local-pipeline.test.mjs tests/heuristic-price-tag-detector.test.mjs tests/online-monitoring/*.test.mjs tests/template-export-online-prices.test.mjs tests/e2e-smoke.test.mjs",
+    "test": "node --test tests/catalog-matching.test.mjs tests/crop-generator.test.mjs tests/crop-storage.test.mjs tests/evidence-contract.test.mjs tests/local-pipeline.test.mjs tests/heuristic-price-tag-detector.test.mjs tests/image-decoder.test.mjs tests/online-monitoring/*.test.mjs tests/template-export-online-prices.test.mjs tests/e2e-smoke.test.mjs",
     "test:worker": "npx --yes tsx --test tests/online-monitoring/worker-lifecycle.test.ts",
     "worker:online": "tsx server/worker/online-monitoring-worker.ts"
   },
