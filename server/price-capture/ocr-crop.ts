@@ -220,7 +220,6 @@ function extractCropBytes(image: DecodedImagePixels, bbox: CropBBox): Uint8Array
   if (!channels) return null;
 
   const cropBytes = new Uint8Array(bbox.width * bbox.height * channels);
-  const sourceRowByteLength = image.dimensions.width * channels;
   const cropRowByteLength = bbox.width * channels;
 
   for (let row = 0; row < bbox.height; row += 1) {
@@ -229,7 +228,6 @@ function extractCropBytes(image: DecodedImagePixels, bbox: CropBBox): Uint8Array
     cropBytes.set(image.bytes.subarray(sourceOffset, sourceOffset + cropRowByteLength), targetOffset);
   }
 
-  void sourceRowByteLength;
   return cropBytes;
 }
 
