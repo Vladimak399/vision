@@ -87,6 +87,18 @@ test("builds stable sanitized crop storage path", () => {
   );
 });
 
+test("sanitizes path traversal-like segments", () => {
+  assert.equal(
+    buildCropStoragePath({
+      companyId: "../company",
+      runId: "..",
+      itemId: "../../item",
+      extension: "..webp",
+    }),
+    "evidence/company/runs/run/crops/item.webp",
+  );
+});
+
 test("serializes crop evidence using DB column names", () => {
   const plan = createCropPlan({
     image: { width: 100, height: 100 },
