@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import numbers
 import os
 import re
 import sys
@@ -329,7 +330,7 @@ def run_rapidocr(engine: Any, image_input: Any) -> Tuple[str, Optional[float], L
     result = engine(image_input)
     items = normalize_rapidocr_result(result)
     text_lines = [item["text"] for item in items if item["text"]]
-    confidences = [item["confidence"] for item in items if isinstance(item.get("confidence"), (int, float))]
+    confidences = [item["confidence"] for item in items if isinstance(item.get("confidence"), numbers.Real)]
 
     confidence = None
     if confidences:
@@ -337,39 +338,46 @@ def run_rapidocr(engine: Any, image_input: Any) -> Tuple[str, Optional[float], L
 
     diagnostics = {
         "rapidocrResultType": type(result).__name__,
+        "rapidocrResultHasTxts": hasattr(result, "txts"),
+        "rapidocrResultHasScores": hasattr(result, "scores"),
+        "rapidocrResultHasBoxes": hasattr(result, "boxes"),
         "normalizedBlockCount": len(items),
     }
     return "\n".join(text_lines), confidence, items, diagnostics
 
 
 def normalize_rapidocr_result(result: Any) -> List[Dict[str, Any]]:
-    """Best-effort normalization across RapidOCR result shapes."""
+    """Best-effort normalization across RapidOCR result shapes.
+
+    RapidOCR versions may expose result.txts/scores/boxes as lists, tuples, or
+    numpy arrays. Never use `value or []` for these values: numpy arrays raise
+    `ValueError: The truth value of an array with more than one element is ambiguous`.
+    """
     raw_items: Any = result
     if hasattr(result, "txts") and hasattr(result, "scores"):
-        txts = list(getattr(result, "txts") or [])
-        scores = list(getattr(result, "scores") or [])
-        boxes = list(getattr(result, "boxes") or [])
+        txts = value_to_list(getattr(result, "txts", None))
+        scores = value_to_list(getattr(result, "scores", None))
+        boxes = value_to_list(getattr(result, "boxes", None))
         return [build_block(text, score_at(scores, index), box_at(boxes, index)) for index, text in enumerate(txts)]
 
     if isinstance(result, tuple) and result:
         raw_items = result[0]
 
-    if raw_items is None:
+    raw_items = value_to_list(raw_items)
+    if not raw_items:
         return []
 
-    if not isinstance(raw_items, list):
-        raw_items = list(raw_items) if isinstance(raw_items, tuple) else []
-
     blocks: List[Dict[str, Any]] = []
-    for item in raw_items:
+    for raw_item in raw_items:
+        item = normalize_python_value(raw_item)
         if isinstance(item, dict):
             blocks.append(build_block(item.get("text"), item.get("confidence") or item.get("score"), item.get("bbox") or item.get("box")))
             continue
 
         if isinstance(item, (list, tuple)) and len(item) >= 2:
             box = item[0]
-            text_or_pair = item[1]
-            if isinstance(text_or_pair, (list, tuple)) and text_or_pair:
+            text_or_pair = normalize_python_value(item[1])
+            if isinstance(text_or_pair, (list, tuple)) and len(text_or_pair) > 0:
                 text = text_or_pair[0]
                 confidence = text_or_pair[1] if len(text_or_pair) > 1 else None
             else:
@@ -382,18 +390,20 @@ def normalize_rapidocr_result(result: Any) -> List[Dict[str, Any]]:
 
 def build_block(text: Any, confidence: Any, box: Any) -> Dict[str, Any]:
     return {
-        "text": str(text or "").strip(),
+        "text": normalize_text(text),
         "confidence": clamp_unit_float(confidence),
         "bbox": box_to_bbox(box),
     }
 
 
 def box_to_bbox(box: Any) -> Optional[Dict[str, int]]:
+    box = normalize_python_value(box)
     if not isinstance(box, (list, tuple)) or len(box) == 0:
         return None
 
     points: List[Tuple[float, float]] = []
-    for point in box:
+    for raw_point in box:
+        point = normalize_python_value(raw_point)
         if isinstance(point, (list, tuple)) and len(point) >= 2:
             try:
                 points.append((float(point[0]), float(point[1])))
@@ -417,6 +427,43 @@ def box_to_bbox(box: Any) -> Optional[Dict[str, int]]:
     }
 
 
+def value_to_list(value: Any) -> List[Any]:
+    value = normalize_python_value(value)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    try:
+        return list(value)
+    except TypeError:
+        return []
+
+
+def normalize_python_value(value: Any) -> Any:
+    if hasattr(value, "tolist"):
+        try:
+            return value.tolist()
+        except Exception:
+            return value
+    if hasattr(value, "item") and not isinstance(value, (str, bytes, bytearray)):
+        try:
+            return value.item()
+        except Exception:
+            return value
+    return value
+
+
+def normalize_text(value: Any) -> str:
+    value = normalize_python_value(value)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
 def score_at(values: List[Any], index: int) -> Any:
     return values[index] if index < len(values) else None
 
@@ -426,7 +473,8 @@ def box_at(values: List[Any], index: int) -> Any:
 
 
 def clamp_unit_float(value: Any) -> Optional[float]:
-    if not isinstance(value, (int, float)):
+    value = normalize_python_value(value)
+    if not isinstance(value, numbers.Real):
         return None
     return round(min(max(float(value), 0.0), 1.0), 4)
 
