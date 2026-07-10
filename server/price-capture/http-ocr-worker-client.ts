@@ -114,6 +114,20 @@ export class HttpOcrWorkerClient implements ExternalOcrWorkerClient {
       });
 
       const parsed = await parseJsonResponse(response);
+      if (!response.ok && parsed.ok === true) {
+        return {
+          ok: false,
+          errorCode: "worker_http_error",
+          errorMessage: `OCR worker returned HTTP ${response.status}.`,
+          diagnostics: {
+            requestId: request.requestId,
+            url: this.url,
+            httpStatus: response.status,
+            durationMs: Date.now() - started,
+          },
+        };
+      }
+
       return normalizeHttpOcrWorkerResponse(parsed, {
         requestId: request.requestId,
         httpStatus: response.status,
