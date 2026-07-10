@@ -25,6 +25,7 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "server/price-capture/local-ocr.ts",
   "server/price-capture/ocr-crop.ts",
   "server/price-capture/ocr-evidence.ts",
+  "server/price-capture/external-ocr-worker.ts",
   "scripts/detector-only-debug.ts",
   "--outDir",
   ".tmp/detector-only-debug-script-test",
@@ -73,15 +74,26 @@ test("parses detector-only debug CLI arguments", () => {
     cropExtension: "webp",
     cropPaddingPixels: 3,
     withOcr: false,
+    ocrMode: "unsupported-noop",
+    mockOcrText: null,
+    mockOcrConfidence: null,
     pretty: false,
   });
 });
 
-test("parses detector-only debug OCR flag", () => {
-  const parsed = parseDetectorOnlyDebugArgs(["./shelf.png", "--with-ocr"]);
+test("parses mock OCR worker debug flags", () => {
+  const parsed = parseDetectorOnlyDebugArgs([
+    "./shelf.jpg",
+    "--ocr-mode", "mock-worker",
+    "--mock-ocr-text", "Цена 99 90",
+    "--mock-ocr-confidence", "0.77",
+  ]);
 
   assert.equal(parsed.ok, true);
   assert.equal(parsed.options.withOcr, true);
+  assert.equal(parsed.options.ocrMode, "mock-worker");
+  assert.equal(parsed.options.mockOcrText, "Цена 99 90");
+  assert.equal(parsed.options.mockOcrConfidence, 0.77);
 });
 
 test("returns usage errors for missing path or invalid options", () => {
@@ -96,6 +108,14 @@ test("returns usage errors for missing path or invalid options", () => {
   const invalidPadding = parseDetectorOnlyDebugArgs(["./shelf.jpg", "--crop-padding", "-1"]);
   assert.equal(invalidPadding.ok, false);
   assert.match(invalidPadding.error, /--crop-padding/);
+
+  const invalidOcrMode = parseDetectorOnlyDebugArgs(["./shelf.jpg", "--ocr-mode", "real"]);
+  assert.equal(invalidOcrMode.ok, false);
+  assert.match(invalidOcrMode.error, /--ocr-mode/);
+
+  const invalidOcrConfidence = parseDetectorOnlyDebugArgs(["./shelf.jpg", "--mock-ocr-confidence", "2"]);
+  assert.equal(invalidOcrConfidence.ok, false);
+  assert.match(invalidOcrConfidence.error, /--mock-ocr-confidence/);
 });
 
 test("infers supported image content types", () => {
@@ -121,13 +141,15 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
     cropExtension: "png",
     cropPaddingPixels: 1,
     withOcr: false,
+    ocrMode: "unsupported-noop",
+    mockOcrText: null,
+    mockOcrConfidence: null,
     pretty: false,
   });
 
   const response = JSON.parse(json);
   assert.equal(response.ok, true);
   assert.equal(response.statusCode, 200);
-  assert.equal(response.ocr, undefined);
   assert.equal(response.report.schemaVersion, "detector-only-report-v1");
   assert.equal(response.report.run.companyId, "company-debug");
   assert.equal(response.report.run.storeId, "store-debug");
@@ -144,8 +166,8 @@ test("runs detector-only debug script against a synthetic PNG file", async () =>
   assert.equal(JSON.stringify(response).includes("bytes"), false);
 });
 
-test("runs detector-only debug script with no-op OCR section", async () => {
-  const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-ocr.png";
+test("runs debug script with mock OCR worker over extracted crops", async () => {
+  const pngPath = ".tmp/detector-only-debug-script-test/synthetic-shelf-mock-ocr.png";
   await writeFile(pngPath, await createSyntheticShelfPng());
 
   const json = await runDetectorOnlyDebug({
@@ -153,25 +175,28 @@ test("runs detector-only debug script with no-op OCR section", async () => {
     companyId: "company-debug",
     storeId: "store-debug",
     week: 1,
-    runId: "run-debug-ocr-1",
+    runId: "run-debug-mock-ocr",
     capturedDate: "2026-07-10",
     contentType: "image/png",
     cropExtension: "png",
     cropPaddingPixels: 1,
     withOcr: true,
+    ocrMode: "mock-worker",
+    mockOcrText: "Цена 99 90",
+    mockOcrConfidence: 0.77,
     pretty: false,
   });
 
   const response = JSON.parse(json);
   assert.equal(response.ok, true);
   assert.equal(response.statusCode, 200);
-  assert.equal(response.ocr.mode, "unsupported-noop");
-  assert.ok(response.ocr.metrics.ocrProcessedCount >= 1);
-  assert.equal(response.ocr.metrics.ocrTextResultCount, 0);
-  assert.ok(response.ocr.metrics.ocrEmptyResultCount >= 1);
-  assert.equal(response.report.summary.ocr.processedCount, response.ocr.metrics.ocrProcessedCount);
-  assert.equal(response.report.summary.ocr.textResultCount, 0);
-  assert.ok(response.report.drafts.some((draft) => draft.ocr?.provider === "local"));
+  assert.equal(response.ocr.mode, "mock-worker");
+  assert.ok(response.ocr.metrics.mergedDraftCount >= 1);
+  assert.equal(response.ocr.metrics.ocrTextResultCount, response.ocr.metrics.mergedDraftCount);
+  assert.equal(response.report.summary.ocr.textResultCount, response.ocr.metrics.mergedDraftCount);
+  assert.equal(response.report.drafts[0].ocr.provider, "mock-worker");
+  assert.equal(response.report.drafts[0].ocr.text, "Цена 99 90");
+  assert.equal(response.report.drafts[0].ocr.confidence, 0.77);
   assert.equal(JSON.stringify(response).includes("bytes"), false);
 });
 
