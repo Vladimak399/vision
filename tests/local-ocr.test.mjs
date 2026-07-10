@@ -148,10 +148,9 @@ test("creates unsupported local OCR engine compatible with OcrEngine", async () 
     },
     crop: {
       bbox: { x: 0, y: 0, width: 1, height: 1 },
-      x: 0,
-      y: 0,
-      width: 1,
-      height: 1,
+      cropWidth: 1,
+      cropHeight: 1,
+      paddingPx: 0,
       wasClamped: false,
     },
   });
