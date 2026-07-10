@@ -41,7 +41,8 @@ export type CropStoragePathInput = {
 };
 
 const DEFAULT_EXTENSION = "jpg";
-const SAFE_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
+const SAFE_SEGMENT_RE = /[^a-zA-Z0-9_-]+/g;
+const SAFE_EXTENSION_RE = /[^a-zA-Z0-9]+/g;
 
 export function createCropPlan(input: CropPlanInput): CropPlan | null {
   const imageWidth = toPositiveInteger(input.image.width);
@@ -119,7 +120,7 @@ function safePathSegment(value: string, fallback: string): string {
 }
 
 function normalizeExtension(value: string): string {
-  const cleaned = value.trim().replace(/^\.+/, "").replace(SAFE_SEGMENT_RE, "").toLowerCase();
+  const cleaned = value.trim().replace(/^\.+/, "").replace(SAFE_EXTENSION_RE, "").toLowerCase();
   return cleaned || DEFAULT_EXTENSION;
 }
 
