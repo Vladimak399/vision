@@ -33,7 +33,7 @@ export default function HomePage() {
               Открыть приложение
             </Link>
             <Link className="btn btn-secondary" href="/ocr-test">
-              Проверить OCR фото
+              Сравнить цены конкурента
             </Link>
             <Link className="btn btn-secondary" href="/login?next=/app">
               Войти
