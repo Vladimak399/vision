@@ -53,26 +53,31 @@ function parseModel(value: unknown) {
 }
 
 function buildPrompt() {
-  return `Ты OCR-модуль PriceVision для мониторинга цен по фото полок магазинов.
+  return `Ты OCR-модуль PriceVision для мониторинга цен у конкурента по фото полки магазина.
 
-Задача:
-1. Найди все видимые ценники, цены, названия товаров, объемы/вес, признаки акции.
-2. Работай по полной фотографии, без предварительной нарезки ценников.
-3. Не выдумывай товар, цену или связь товар-ценник, если текст плохо виден.
-4. Если связь цены с товаром неочевидна, добавь предупреждение.
-5. Верни только валидный JSON без Markdown.
+Главная цель:
+Получить список ценников конкурента, чтобы потом сравнить цену с нашим каталогом.
+
+Правила:
+1. Извлекай только то, что видно на ценнике или рядом с ценником: название, цену, объем/вес, акцию, сырой текст.
+2. Не определяй товар по упаковке, если название не читается на ценнике.
+3. Не выдумывай бренд, вкус, вес, цену или копейки.
+4. Если цена есть, но название товара плохо видно, оставь competitor_product_name пустым и добавь warning.
+5. Если видны старая и новая цена, competitor_price должна быть текущей ценой для покупателя, а promo=true.
+6. Верни только валидный JSON без Markdown.
 
 Формат:
 {
   "items": [
     {
-      "price": 0,
+      "competitor_product_name": "",
+      "competitor_price": 0,
       "currency": "RUB",
+      "raw_price_text": "",
       "raw_text": "",
-      "possible_product_name": "",
       "weight_or_volume": "",
       "promo": false,
-      "confidence": 0,
+      "ocr_confidence": 0,
       "warnings": []
     }
   ],
@@ -135,7 +140,7 @@ async function callOpenRouter(model: string, imageDataUrl: string, apiKey: strin
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
-      "X-Title": "PriceVision OCR Test",
+      "X-Title": "PriceVision Competitor Price Test",
     },
     body: JSON.stringify({
       model,
@@ -210,6 +215,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         provider: "openrouter",
+        mode: "competitor_price_monitoring",
         model,
         fallbackUsed: model !== primaryModel,
         ...result,
@@ -221,7 +227,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json(
     {
-      error: "Не удалось распознать фото через OpenRouter.",
+      error: "Не удалось распознать цены конкурента через OpenRouter.",
       details: errors,
     },
     { status: 502 },
