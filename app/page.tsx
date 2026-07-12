@@ -32,6 +32,9 @@ export default function HomePage() {
             <Link className="btn" href="/app">
               Открыть приложение
             </Link>
+            <Link className="btn btn-secondary" href="/ocr-test">
+              Сравнить цены конкурента
+            </Link>
             <Link className="btn btn-secondary" href="/login?next=/app">
               Войти
             </Link>
