@@ -8,35 +8,67 @@ export type AiTaskConfig = {
 
 export type AiRuntimeConfig = {
   vision: AiTaskConfig;
+  visionRescue: AiTaskConfig;
   text: AiTaskConfig;
   fallback: AiTaskConfig;
   runBudgetUsd: number;
 };
 
-const DEFAULT_VISION_PROVIDER: AiProvider = "gemini";
-const DEFAULT_VISION_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_TEXT_PROVIDER: AiProvider = "gemini";
 const DEFAULT_TEXT_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_FALLBACK_PROVIDER: AiProvider = "gemini";
-const DEFAULT_FALLBACK_MODEL = "gemini-2.5-flash";
 const DEFAULT_RUN_BUDGET_USD = 1;
 
 export function getAiRuntimeConfig(): AiRuntimeConfig {
+  const visionProvider = parseProvider(process.env.AI_VISION_PROVIDER, getDefaultVisionProvider());
+  const fallbackProvider = parseProvider(process.env.AI_FALLBACK_PROVIDER, getDefaultFallbackProvider(visionProvider));
+  const rescueProvider = parseProvider(process.env.AI_VISION_RESCUE_PROVIDER, process.env.OPENROUTER_API_KEY ? "openrouter" : "disabled");
+
   return {
     vision: {
-      provider: parseProvider(process.env.AI_VISION_PROVIDER, DEFAULT_VISION_PROVIDER),
-      model: process.env.AI_VISION_MODEL || process.env.OPENAI_OCR_MODEL || DEFAULT_VISION_MODEL,
+      provider: visionProvider,
+      model: process.env.AI_VISION_MODEL || process.env.OPENAI_OCR_MODEL || getDefaultVisionModel(visionProvider),
+    },
+    visionRescue: {
+      provider: rescueProvider,
+      model: process.env.AI_VISION_RESCUE_MODEL || "openai/gpt-4.1-mini",
     },
     text: {
       provider: parseProvider(process.env.AI_TEXT_PROVIDER, DEFAULT_TEXT_PROVIDER),
       model: process.env.AI_TEXT_MODEL || DEFAULT_TEXT_MODEL,
     },
     fallback: {
-      provider: parseProvider(process.env.AI_FALLBACK_PROVIDER, DEFAULT_FALLBACK_PROVIDER),
-      model: process.env.AI_FALLBACK_MODEL || DEFAULT_FALLBACK_MODEL,
+      provider: fallbackProvider,
+      model: process.env.AI_FALLBACK_MODEL || getDefaultFallbackModel(visionProvider, fallbackProvider),
     },
     runBudgetUsd: parseBudget(process.env.AI_RUN_BUDGET_USD),
   };
+}
+
+function getDefaultVisionProvider(): AiProvider {
+  if (process.env.GEMINI_API_KEY) return "gemini";
+  if (process.env.OPENROUTER_API_KEY) return "openrouter";
+  if (process.env.OPENAI_API_KEY) return "openai";
+  return "gemini";
+}
+
+function getDefaultFallbackProvider(primary: AiProvider): AiProvider {
+  if (primary === "openrouter" && process.env.OPENROUTER_API_KEY) return "openrouter";
+  if (primary !== "openrouter" && process.env.OPENROUTER_API_KEY) return "openrouter";
+  if (primary !== "gemini" && process.env.GEMINI_API_KEY) return "gemini";
+  if (primary !== "openai" && process.env.OPENAI_API_KEY) return "openai";
+  return DEFAULT_FALLBACK_PROVIDER;
+}
+
+function getDefaultVisionModel(provider: AiProvider) {
+  if (provider === "openrouter") return "openrouter/free";
+  if (provider === "openai") return "gpt-4.1-mini";
+  return "gemini-2.5-flash-lite";
+}
+
+function getDefaultFallbackModel(primary: AiProvider, fallback: AiProvider) {
+  if (primary === "openrouter" && fallback === "openrouter") return "qwen/qwen3-vl-30b-a3b-instruct";
+  return getDefaultVisionModel(fallback);
 }
 
 export function getAiConfig(): AiRuntimeConfig {

@@ -259,7 +259,7 @@ export async function fillTemplateWithPrices(
   // exceljs ожидает Node.js Buffer, используем приведение типов
   await workbook.xlsx.load(fileBuffer as unknown as ArrayBuffer);
 
-  const parsed = parseMonitoringTemplate(fileBuffer, week);
+  const parsed = await parseMonitoringTemplate(fileBuffer, week);
   const competitorColumns = parsed.columns.filter(
     (column) => column.priceKind === "competitor" && column.week === week,
   );
@@ -282,7 +282,7 @@ export async function fillTemplateWithPrices(
   const columnToStoreId = buildColumnStoreMap(competitorColumns, stores);
 
   // exceljs использует 1-индексацию строк (row 1 = первая строка)
-  // parseMonitoringTemplate возвращает rowIndex с 0-индексацией, как xlsx
+  // parseMonitoringTemplate возвращает rowIndex с 0-индексацией.
   // Конвертируем: exceljsRow = rowIndex + 1
   for (const worksheet of workbook.worksheets) {
     const sheetName = worksheet.name;
@@ -352,7 +352,7 @@ export async function computeExportPreflight(
   supabaseClient: SupabaseServiceClient,
   mode: PriceObservationMode = "latest",
 ): Promise<ExportPreflightReport> {
-  const parsed = parseMonitoringTemplate(fileBuffer, week);
+  const parsed = await parseMonitoringTemplate(fileBuffer, week);
   const competitorColumns = parsed.columns.filter(
     (column) => column.priceKind === "competitor" && column.week === week,
   );

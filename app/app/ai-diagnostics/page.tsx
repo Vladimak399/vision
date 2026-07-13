@@ -54,6 +54,8 @@ export default async function AiDiagnosticsPage() {
           <ConfigRow label="Text model" value={aiConfig.text.model} />
           <ConfigRow label="Fallback provider" value={aiConfig.fallback.provider} />
           <ConfigRow label="Fallback model" value={aiConfig.fallback.model} />
+          <ConfigRow label="Vision rescue provider" value={aiConfig.visionRescue.provider} />
+          <ConfigRow label="Vision rescue model" value={aiConfig.visionRescue.model} />
           <ConfigRow label="Run budget" value={`$${aiConfig.runBudgetUsd}`} />
         </dl>
         <h3>Переменные окружения</h3>

@@ -152,7 +152,7 @@ export async function importMonitoringTemplateAction(
 
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
-    const parsed = parseMonitoringTemplate(buffer, week);
+    const parsed = await parseMonitoringTemplate(buffer, week);
 
     if (parsed.products.length === 0) {
       return { ...initialResult, week, errors: ["В файле не найдено ни одного товара со штрихкодом"] };

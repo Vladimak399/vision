@@ -4,13 +4,14 @@ import { Buffer } from "node:buffer";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import sharp from "sharp";
 
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { autoMatchRecognizedItems, type AutoMatchRecognizedItem, type AutoMatchStats } from "../../../server/auto-catalog-matching";
 import { getCurrentUser } from "../../../server/auth";
 import { getPrimaryCompanyMembership } from "../../../server/primary-membership";
 import { getShelfRecognitionMissingKeyMessage, hasShelfRecognitionKey, recognizeShelfPhoto } from "../../../server/shelf-recognition";
-import type { ShelfRecognitionItem } from "../../../server/shelf-recognition/types";
+import type { ShelfRecognitionBbox, ShelfRecognitionItem } from "../../../server/shelf-recognition/types";
 
 type QueueJobPayload = {
   photo_id?: string;
@@ -35,6 +36,13 @@ type RecognitionJobResult = {
   ok: boolean;
   skipped?: boolean;
   autoMatch?: AutoMatchStats;
+};
+
+type InsertedRecognizedItem = AutoMatchRecognizedItem & {
+  bbox: ShelfRecognitionBbox | null;
+  confidence: number;
+  link_confidence: number;
+  price_minor: number | null;
 };
 
 export type ProcessQueueState = {
@@ -230,8 +238,11 @@ async function processOneRecognitionJob({
   }
 
   try {
-    const image = await loadPhotoAsBase64(supabase, photo.storage_path);
-    const recognition = await recognizeShelfPhoto(image);
+    const image = await loadPhoto(supabase, photo.storage_path);
+    const recognition = await recognizeShelfPhoto({
+      imageBase64: image.bytes.toString("base64"),
+      mimeType: image.mimeType,
+    });
     const rows = buildRecognizedItemRows({ companyId, sessionId, photoId, items: recognition.items });
     let autoMatch: AutoMatchStats | undefined;
 
@@ -239,17 +250,28 @@ async function processOneRecognitionJob({
       const { data: insertedItems, error: insertError } = await supabase
         .from("recognized_items")
         .insert(rows)
-        .select("id, raw_name, brand, size_text, price_tag_text, product_visible_text")
-        .returns<AutoMatchRecognizedItem[]>();
+        .select("id, raw_name, brand, size_text, price_tag_text, product_visible_text, bbox, confidence, link_confidence, price_minor")
+        .returns<InsertedRecognizedItem[]>();
 
       if (insertError) {
         throw new Error(insertError.message);
       }
 
+      const safeItems = (insertedItems ?? []).filter(isSafeForAutoMatch);
+
+      await saveEvidence({
+        companyId,
+        imageBytes: image.bytes,
+        items: insertedItems ?? [],
+        photoId,
+        sourceStoragePath: photo.storage_path,
+        supabase,
+      });
+
       autoMatch = await autoMatchRecognizedItems({
         companyId,
         createdBy: userId,
-        items: insertedItems ?? [],
+        items: safeItems,
         sessionId,
         supabase,
       });
@@ -299,7 +321,7 @@ async function processOneRecognitionJob({
   }
 }
 
-async function loadPhotoAsBase64(
+async function loadPhoto(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   storagePath: string,
 ) {
@@ -309,13 +331,10 @@ async function loadPhotoAsBase64(
     throw new Error(error?.message ?? "Не удалось скачать фото из Supabase Storage. Проверьте bucket monitoring-photos и права доступа.");
   }
 
-  const arrayBuffer = await data.arrayBuffer();
+  const bytes = Buffer.from(await data.arrayBuffer());
   const mimeType = data.type || inferMimeType(storagePath);
 
-  return {
-    imageBase64: Buffer.from(arrayBuffer).toString("base64"),
-    mimeType,
-  };
+  return { bytes, mimeType };
 }
 
 function buildRecognizedItemRows({
@@ -350,6 +369,7 @@ function buildRecognizedItemRows({
         currency: "RUB",
         confidence: clampConfidence(Math.min(item.confidence, item.link_confidence)),
         link_confidence: clampConfidence(item.link_confidence),
+        bbox: item.bbox,
         price_tag_text: item.price_tag_text,
         product_visible_text: item.product_visible_text,
         review_reason: item.review_reason,
@@ -358,6 +378,78 @@ function buildRecognizedItemRows({
       },
     ];
   });
+}
+
+function isSafeForAutoMatch(item: InsertedRecognizedItem) {
+  return item.confidence >= 0.8 && item.link_confidence >= 0.8 && item.price_minor !== null && item.bbox !== null;
+}
+
+async function saveEvidence({
+  companyId,
+  imageBytes,
+  items,
+  photoId,
+  sourceStoragePath,
+  supabase,
+}: {
+  companyId: string;
+  imageBytes: Buffer;
+  items: InsertedRecognizedItem[];
+  photoId: string;
+  sourceStoragePath: string;
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+}) {
+  const metadata = await sharp(imageBytes).metadata();
+  const imageWidth = metadata.width ?? 0;
+  const imageHeight = metadata.height ?? 0;
+  const sourceDirectory = sourceStoragePath.split("/").slice(0, -1).join("/");
+
+  const evidenceRows = [];
+
+  for (const item of items) {
+    let storagePath = sourceStoragePath;
+    const crop = toPixelCrop(item.bbox, imageWidth, imageHeight);
+
+    if (crop) {
+      const cropPath = `${sourceDirectory}/evidence/${item.id}.jpg`;
+
+      try {
+        const cropBytes = await sharp(imageBytes).extract(crop).jpeg({ quality: 88 }).toBuffer();
+        const { error } = await supabase.storage.from(MONITORING_PHOTOS_BUCKET).upload(cropPath, cropBytes, {
+          contentType: "image/jpeg",
+          upsert: false,
+        });
+
+        if (!error) storagePath = cropPath;
+      } catch {
+        storagePath = sourceStoragePath;
+      }
+    }
+
+    evidenceRows.push({
+      bbox: item.bbox,
+      company_id: companyId,
+      photo_id: photoId,
+      recognized_item_id: item.id,
+      storage_path: storagePath,
+    });
+  }
+
+  if (evidenceRows.length > 0) {
+    const { error } = await supabase.from("evidence").insert(evidenceRows);
+    if (error) throw new Error(`Не удалось сохранить evidence: ${error.message}`);
+  }
+}
+
+function toPixelCrop(bbox: ShelfRecognitionBbox | null, imageWidth: number, imageHeight: number) {
+  if (!bbox || imageWidth <= 0 || imageHeight <= 0) return null;
+
+  const left = Math.max(0, Math.floor(bbox.x * imageWidth));
+  const top = Math.max(0, Math.floor(bbox.y * imageHeight));
+  const width = Math.min(imageWidth - left, Math.ceil(bbox.width * imageWidth));
+  const height = Math.min(imageHeight - top, Math.ceil(bbox.height * imageHeight));
+
+  return width >= 8 && height >= 8 ? { left, top, width, height } : null;
 }
 
 function firstNonEmpty(values: Array<string | null>) {

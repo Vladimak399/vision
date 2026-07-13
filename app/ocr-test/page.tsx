@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { ChangeEvent, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+import Excel from "exceljs";
+import Papa from "papaparse";
 
 type OcrResult = {
   provider?: string;
@@ -270,18 +271,46 @@ function detectCatalogColumns(headers: string[]) {
 }
 
 async function readCatalogFile(file: File) {
-  const workbook = /\.(csv|txt)$/i.test(file.name)
-    ? XLSX.read(await file.text(), { type: "string" })
-    : XLSX.read(await file.arrayBuffer(), { type: "array" });
+  let rows: Record<string, unknown>[];
 
-  const firstSheetName = workbook.SheetNames[0];
+  if (/\.(csv|txt)$/i.test(file.name)) {
+    const parsed = Papa.parse<Record<string, unknown>>(await file.text(), {
+      header: true,
+      skipEmptyLines: true,
+    });
 
-  if (!firstSheetName) {
-    throw new Error("В файле каталога не найден лист с данными.");
+    if (parsed.errors.length > 0 && parsed.data.length === 0) {
+      throw new Error(parsed.errors[0]?.message || "Не удалось прочитать CSV-каталог.");
+    }
+
+    rows = parsed.data;
+  } else {
+    const workbook = new Excel.Workbook();
+    await workbook.xlsx.load(await file.arrayBuffer());
+    const sheet = workbook.worksheets[0];
+
+    if (!sheet) {
+      throw new Error("В файле каталога не найден лист с данными.");
+    }
+
+    const headers = Array.from({ length: sheet.columnCount }, (_, index) =>
+      sheet.getRow(1).getCell(index + 1).text.trim(),
+    );
+
+    rows = [];
+    for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+      const row = sheet.getRow(rowNumber);
+      const item = Object.fromEntries(
+        headers.flatMap((header, index) =>
+          header ? [[header, row.getCell(index + 1).text.trim()]] : [],
+        ),
+      );
+
+      if (Object.values(item).some(Boolean)) {
+        rows.push(item);
+      }
+    }
   }
-
-  const sheet = workbook.Sheets[firstSheetName];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
 
   if (!rows.length) {
     throw new Error("Каталог пустой или не прочитан.");

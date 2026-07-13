@@ -13,7 +13,7 @@ export type AiRetryOptions = {
   baseDelayMs?: number;
 };
 
-const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 export function isRetryableAiError(error: unknown) {
   return error instanceof AiHttpError && RETRYABLE_STATUSES.has(error.status);
@@ -21,7 +21,9 @@ export function isRetryableAiError(error: unknown) {
 
 export function isAiFallbackCandidate(error: unknown) {
   // Транзитные ошибки (лимит, перегрузка, пустой/битый ответ) — повод попробовать fallback-провайдер.
-  return error instanceof AiHttpError && (error.status === 429 || error.status === 500 || error.status === 502 || error.status === 503 || error.status === 504);
+  if (error instanceof AiHttpError) return RETRYABLE_STATUSES.has(error.status);
+  if (!(error instanceof Error)) return false;
+  return error.name === "AbortError" || error.name === "TimeoutError";
 }
 
 export async function withAiRetry<T>(operation: () => Promise<T>, options: AiRetryOptions = {}) {

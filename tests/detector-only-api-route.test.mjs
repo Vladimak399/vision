@@ -21,6 +21,7 @@ execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", [
   "server/price-capture/detector-only-orchestrator.ts",
   "server/price-capture/detector-only-report.ts",
   "server/price-capture/detector-only-api-boundary.ts",
+  "app/app/price-capture/api/detector-only/route-utils.ts",
   "app/app/price-capture/api/detector-only/route.ts",
   "--outDir",
   ".tmp/detector-only-api-route-test",
@@ -38,7 +39,7 @@ const {
   buildDetectorOnlyApiRequestFromRouteBody,
   isDetectorOnlyApiRouteEnabled,
   isDetectorOnlyRouteBody,
-} = require("../.tmp/detector-only-api-route-test/app/app/price-capture/api/detector-only/route.js");
+} = require("../.tmp/detector-only-api-route-test/app/app/price-capture/api/detector-only/route-utils.js");
 
 after(() => {
   rmSync(".tmp/detector-only-api-route-test", { recursive: true, force: true });

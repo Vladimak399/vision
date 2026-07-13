@@ -31,6 +31,7 @@ Rules:
 14. For promo price tags, put the actual current selling price in price_minor. Put crossed-out or previous price in old_price_minor when visible.
 15. Ignore decorative packaging text that is not part of product identity unless it helps distinguish the variant.
 16. Partially readable products or price tags should be returned with needs_review=true rather than omitted, as long as there is a readable product-price candidate.
+17. For every item, return bbox for the shelf price tag as normalized image coordinates: {"x":0..1,"y":0..1,"width":0..1,"height":0..1}. The box must tightly cover the price tag, not the product. Use null only when the tag location cannot be determined.
 
 Confidence fields:
 - confidence: how confident you are in extracted text and price.

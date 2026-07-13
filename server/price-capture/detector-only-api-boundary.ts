@@ -57,10 +57,10 @@ export async function handleDetectorOnlyApiRequest(
   options: DetectorOnlyApiHandlerOptions = {},
 ): Promise<DetectorOnlyApiResponse> {
   const contextResult = normalizeContext(request);
-  if (!contextResult.ok) return contextResult.response;
+  if ("response" in contextResult) return contextResult.response;
 
   const photoResult = normalizePhoto(request.photo);
-  if (!photoResult.ok) return photoResult.response;
+  if ("response" in photoResult) return photoResult.response;
 
   try {
     const processor = options.processor ?? createSharpHeuristicDetectorOnlyProcessor();
@@ -96,13 +96,13 @@ function normalizeContext(request: DetectorOnlyApiRequest):
   | { ok: true; context: DetectorRunContextInput }
   | { ok: false; response: DetectorOnlyApiErrorResponse } {
   const companyId = emptyToNull(request.companyId);
-  if (!companyId) return errorResponse(400, "invalid_context", "companyId is required.");
+  if (!companyId) return { ok: false, response: errorResponse(400, "invalid_context", "companyId is required.") };
 
   const storeId = emptyToNull(request.storeId);
-  if (!storeId) return errorResponse(400, "invalid_context", "storeId is required.");
+  if (!storeId) return { ok: false, response: errorResponse(400, "invalid_context", "storeId is required.") };
 
   if (request.week !== 1 && request.week !== 2) {
-    return errorResponse(400, "invalid_context", "week must be 1 or 2.", { week: request.week });
+    return { ok: false, response: errorResponse(400, "invalid_context", "week must be 1 or 2.", { week: request.week }) };
   }
 
   return {
@@ -122,11 +122,14 @@ function normalizeContext(request: DetectorOnlyApiRequest):
 function normalizePhoto(photo: DetectorOnlyApiRequest["photo"]):
   | { ok: true; image: EncodedImageInput }
   | { ok: false; response: DetectorOnlyApiErrorResponse } {
-  if (!photo) return errorResponse(400, "invalid_photo", "photo is required.");
+  if (!photo) return { ok: false, response: errorResponse(400, "invalid_photo", "photo is required.") };
 
   const bytes = normalizeBytes(photo.bytes);
   if (!bytes) {
-    return errorResponse(422, "invalid_photo", "photo.bytes must be a non-empty Uint8Array, ArrayBuffer, or byte array.");
+    return {
+      ok: false,
+      response: errorResponse(422, "invalid_photo", "photo.bytes must be a non-empty Uint8Array, ArrayBuffer, or byte array."),
+    };
   }
 
   return {

@@ -39,7 +39,6 @@ import {
   normalizeSizeText,
 } from "../server/online-monitoring/normalize.ts";
 
-import * as XLSX from "xlsx";
 import Excel from "exceljs";
 
 // ============================================================
@@ -268,7 +267,7 @@ describe("Photo-flow E2E smoke", () => {
     }
 
     // Строим шаблон Яны (Продукты) с колонкой-конкурентом "Спар, Ленина 60"
-    const templateBuf = buildYanaTemplate([
+    const templateBuf = await buildYanaTemplate([
       { name: "Милка Шоколад молочный 90г", barcode: "46012345" },
       { name: "Колгейт Зубная паста 100мл", barcode: "46067890" },
       { name: "Сплат Зубная паста биокальций 100мл", barcode: "46011111" },
@@ -279,10 +278,11 @@ describe("Photo-flow E2E smoke", () => {
     const stores = [{ id: "store-spar", name: "Спар", address: "Ленина 60" }];
 
     // Заполняем цены (зеркало fillTemplateWithPrices, но из in-memory priceMap)
-    const filledBuf = fillTemplateWithInMemoryPrices(templateBuf, 1, CATALOG, stores, priceMap);
-    const filled = XLSX.read(filledBuf, { type: "buffer" });
-    const ws = filled.Sheets["Продукты"];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
+    const filledBuf = await fillTemplateWithInMemoryPrices(templateBuf, 1, CATALOG, stores, priceMap);
+    const filled = new Excel.Workbook();
+    await filled.xlsx.load(filledBuf);
+    const worksheet = filled.getWorksheet("Продукты");
+    assert.ok(worksheet);
 
     // Колонка D (index 3) — "Спар, Ленина 60"; строки товаров начинаются с row 2 (0-based)
     // Milka → 89.90, Colgate → 129.90, Splat → 159.90, Ariel → 349.00
@@ -293,10 +293,10 @@ describe("Photo-flow E2E smoke", () => {
       "46022222": 349.0,
       "46999999": undefined, // несопоставлен → ячейка пуста
     };
-    for (let r = 2; r < rows.length; r++) {
-      const barcode = String(rows[r][1] ?? "").trim();
+    for (let rowNumber = 3; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+      const barcode = String(worksheet.getCell(rowNumber, 2).value ?? "").trim();
       if (!expect[barcode]) continue;
-      const cell = rows[r][3];
+      const cell = worksheet.getCell(rowNumber, 4).value;
       if (expect[barcode] === undefined) {
         assert.equal(cell, "" , `товар ${barcode} (несопоставлен) — ячейка пуста`);
       } else {
@@ -497,21 +497,14 @@ function mergeLatest(online, photo) {
 // Helpers: построение шаблона Яны и заполнения цен
 // ============================================================
 
-function buildYanaTemplate(products) {
-  const wsData = [];
-  // row 0: наша ТТ (merge C:D)
-  wsData.push(["", "", "Наша ТТ (Розница)"]);
-  // row 1: заголовки колонок
-  wsData.push(["Наименование", "Штрихкод", "Наша цена", "Спар, Ленина 60"]);
-  // rows 2+: товары
-  for (const p of products) {
-    wsData.push([p.name, p.barcode, "", ""]);
-  }
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws["!merges"] = [{ s: { r: 0, c: 2 }, e: { r: 0, c: 3 } }];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Продукты");
-  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+async function buildYanaTemplate(products) {
+  const workbook = new Excel.Workbook();
+  const worksheet = workbook.addWorksheet("Продукты");
+  worksheet.addRow(["", "", "Наша ТТ (Розница)"]);
+  worksheet.addRow(["Наименование", "Штрихкод", "Наша цена", "Спар, Ленина 60"]);
+  for (const product of products) worksheet.addRow([product.name, product.barcode, "", ""]);
+  worksheet.mergeCells(1, 3, 1, 4);
+  return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
 /**
@@ -522,7 +515,7 @@ async function fillTemplateWithInMemoryPrices(fileBuffer, week, catalog, stores,
   const workbook = new Excel.Workbook();
   await workbook.xlsx.load(fileBuffer);
 
-  const parsed = parseMonitoringTemplate(fileBuffer, week);
+  const parsed = await parseMonitoringTemplate(fileBuffer, week);
   const competitorColumns = parsed.columns.filter((c) => c.priceKind === "competitor" && c.week === week);
 
   const barcodeToCatalogId = buildBarcodeMap(catalog);

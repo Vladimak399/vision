@@ -2,6 +2,7 @@ import type {
   LooseRecognitionItem,
   LooseRecognitionPayload,
   ShelfRecognitionItem,
+  ShelfRecognitionBbox,
   ShelfRecognitionPayload,
 } from "./types";
 
@@ -108,7 +109,55 @@ export function normalizeItem(item: LooseRecognitionItem): ShelfRecognitionItem 
     needs_review: Boolean(item.needs_review),
     review_reason: nullableString(item.review_reason),
     position_hint: nullableString(item.position_hint) ?? nullableString(item.location),
+    bbox: normalizeBbox(item.bbox),
   };
+}
+
+function normalizeBbox(value: unknown): ShelfRecognitionBbox | null {
+  if (Array.isArray(value) && value.length === 4) {
+    const [yMin, xMin, yMax, xMax] = value.map(finiteNumber);
+    if ([yMin, xMin, yMax, xMax].some((part) => part === null)) return null;
+    return normalizeBbox({
+      x: xMin!,
+      y: yMin!,
+      width: xMax! - xMin!,
+      height: yMax! - yMin!,
+    });
+  }
+  if (!value || typeof value !== "object") return null;
+
+  const raw = value as Record<string, unknown>;
+  let x = finiteNumber(raw.x ?? raw.left ?? raw.xmin ?? raw.x_min);
+  let y = finiteNumber(raw.y ?? raw.top ?? raw.ymin ?? raw.y_min);
+  let width = finiteNumber(raw.width ?? raw.w);
+  let height = finiteNumber(raw.height ?? raw.h);
+  const xMax = finiteNumber(raw.xmax ?? raw.x_max ?? raw.right);
+  const yMax = finiteNumber(raw.ymax ?? raw.y_max ?? raw.bottom);
+
+  if (width === null && x !== null && xMax !== null) width = xMax - x;
+  if (height === null && y !== null && yMax !== null) height = yMax - y;
+
+  if (x === null || y === null || width === null || height === null) return null;
+  const maxCoordinate = Math.max(x, y, width, height, x + width, y + height);
+  if (maxCoordinate > 2 && maxCoordinate <= 1000) {
+    x /= 1000;
+    y /= 1000;
+    width /= 1000;
+    height /= 1000;
+  }
+  if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 1.001 || y + height > 1.001) return null;
+
+  return {
+    x: Math.max(0, Math.min(1, x)),
+    y: Math.max(0, Math.min(1, y)),
+    width: Math.min(width, 1 - x),
+    height: Math.min(height, 1 - y),
+  };
+}
+
+function finiteNumber(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
 }
 
 function getLooseItems(parsed: ShelfRecognitionPayload | LooseRecognitionPayload | LooseRecognitionItem[]) {

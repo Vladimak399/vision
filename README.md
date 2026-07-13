@@ -20,7 +20,7 @@
 
 - Next.js 15 App Router, React 19, TypeScript.
 - Supabase Postgres/Auth/Storage.
-- `xlsx` для XLSX, `papaparse` для CSV.
+- `exceljs` для XLSX, `papaparse` для CSV.
 - OpenAI/Gemini adapter для shelf recognition.
 - Node test runner для unit/regression-тестов matching.
 
@@ -33,6 +33,18 @@ npm run dev
 ```
 
 Откройте `http://localhost:3000`.
+
+## Рабочий MVP: фото → отчет
+
+1. Импортируйте каталог в `/app/catalog/import` или используйте уже загруженный каталог.
+2. Создайте магазин и сессию в `/app/monitoring/new`.
+3. Загрузите JPEG/PNG/WebP, нажмите «Распознать новые фото».
+4. Откройте «Проверка товаров»: сомнительные OCR и совпадения остаются в `needs_review`.
+5. Скачайте Excel или JSON из блока «Выгрузка».
+
+Для каждой строки сохраняются исходное фото, нормализованный `bbox`, JPEG-crop ценника, OCR-текст и confidence. В отчет входят товар, цена конкурента, наша цена, разница, confidence и статус.
+
+Для OpenRouter достаточно `OPENROUTER_API_KEY`. Рабочая цепочка OCR: бесплатный `openrouter/free` (timeout 30 секунд) → до двух попыток `qwen/qwen3-vl-30b-a3b-instruct` → быстрый rescue `openai/gpt-4.1-mini`. Переключение происходит при rate limit, timeout, перегрузке, пустом/некорректном ответе или отсутствии bbox. Модели задаются через `AI_VISION_MODEL`, `AI_FALLBACK_MODEL` и `AI_VISION_RESCUE_MODEL`.
 
 ## Переменные окружения
 
@@ -70,7 +82,7 @@ supabase db reset
 
 ## Импорт ассортимента
 
-Поддерживаются CSV/XLS/XLSX. Импорт читает первый лист XLS/XLSX и ожидает колонки или русские аналоги:
+Поддерживаются CSV/XLSX. Импорт читает первый лист XLSX и ожидает колонки или русские аналоги:
 
 - `external_sku`, `sku`, `артикул`
 - `name`, `название`, `наименование`

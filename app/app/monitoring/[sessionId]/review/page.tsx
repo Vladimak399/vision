@@ -58,8 +58,11 @@ type ReviewItem = {
   status: string;
   created_at: string;
   monitoring_photos: { storage_path: string } | null;
+  evidence: Array<{ storage_path: string }> | null;
   matches: ReviewMatch[] | null;
 };
+
+type EvidencePreview = { cropUrl: string | null; sourceUrl: string | null };
 
 type SessionRow = {
   id: string;
@@ -144,7 +147,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
   let itemsQuery = supabase
     .from("recognized_items")
     .select(
-      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, monitoring_photos(storage_path), matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text, own_price_minor, currency))",
+      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, monitoring_photos(storage_path), evidence(storage_path), matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text, own_price_minor, currency))",
     )
     .eq("company_id", companyId)
     .eq("session_id", sessionId);
@@ -170,6 +173,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
     .returns<ReviewCatalogProduct[]>();
 
   const allItems = items ?? [];
+  const evidencePreviews = await buildEvidencePreviews(supabase, allItems);
   const suggestionsByItemId = buildSuggestionsByItemId(allItems, catalogProducts ?? []);
   const visibleItems = sortItemsForReview(
     allItems.filter((item) => filterItemByTask(item, suggestionsByItemId.get(item.id) ?? [], taskFilter)),
@@ -189,9 +193,14 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
               {session.stores?.name ?? "Магазин"} · {session.stores?.address ?? "адрес не указан"}. Проверьте спорные строки и выгрузите Excel.
             </p>
           </div>
-          <Link className="btn btn-secondary" href={`/app/monitoring/${sessionId}/export.xlsx`}>
-            Выгрузить Excel
-          </Link>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+            <Link className="btn btn-secondary" href={`/app/monitoring/${sessionId}/export.xlsx`}>
+              Выгрузить Excel
+            </Link>
+            <Link className="btn btn-secondary" href={`/app/monitoring/${sessionId}/export.json`}>
+              Выгрузить JSON
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -270,6 +279,7 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
 
                   <div style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
                     <RecognizedBlock item={item} />
+                    <EvidenceBlock preview={evidencePreviews.get(item.id)} />
                     <CatalogBlock
                       activeMatch={activeMatch}
                       bestSuggestion={bestSuggestion}
@@ -308,6 +318,58 @@ export default async function RecognizedItemsReviewPage({ params, searchParams }
       )}
     </main>
   );
+}
+
+function EvidenceBlock({ preview }: { preview?: EvidencePreview }) {
+  if (!preview?.cropUrl) {
+    return (
+      <section style={panelStyle}>
+        <strong>Фото-доказательство</strong>
+        <p style={{ color: "#6b7280", margin: 0 }}>Crop недоступен. Строка требует ручной проверки.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section style={panelStyle}>
+      <strong>Ценник</strong>
+      {/* Signed storage URL is dynamic, so a native image is appropriate here. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        alt="Crop ценника"
+        src={preview.cropUrl}
+        style={{ borderRadius: 8, maxHeight: 180, objectFit: "contain", width: "100%" }}
+      />
+      {preview.sourceUrl ? <a href={preview.sourceUrl} rel="noreferrer" target="_blank">Открыть исходное фото</a> : null}
+    </section>
+  );
+}
+
+async function buildEvidencePreviews(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  items: ReviewItem[],
+) {
+  const paths = Array.from(new Set(items.flatMap((item) => [
+    item.monitoring_photos?.storage_path,
+    item.evidence?.[0]?.storage_path,
+  ]).filter((path): path is string => Boolean(path))));
+
+  const urlsByPath = new Map<string, string>();
+  if (paths.length > 0) {
+    const { data } = await supabase.storage.from("monitoring-photos").createSignedUrls(paths, 60 * 60);
+    for (const [index, signed] of (data ?? []).entries()) {
+      if (signed.signedUrl) urlsByPath.set(paths[index], signed.signedUrl);
+    }
+  }
+
+  return new Map(items.map((item) => {
+    const sourcePath = item.monitoring_photos?.storage_path ?? null;
+    const cropPath = item.evidence?.[0]?.storage_path ?? null;
+    return [item.id, {
+      cropUrl: cropPath ? urlsByPath.get(cropPath) ?? null : null,
+      sourceUrl: sourcePath ? urlsByPath.get(sourcePath) ?? null : null,
+    } satisfies EvidencePreview];
+  }));
 }
 
 function RecognizedBlock({ item }: { item: ReviewItem }) {
