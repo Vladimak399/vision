@@ -10,6 +10,13 @@ export type ShelfRecognitionInput =
       mimeType: string;
     };
 
+export type ShelfRecognitionBbox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type ShelfRecognitionItem = {
   raw_name: string | null;
   brand: string | null;
@@ -25,6 +32,7 @@ export type ShelfRecognitionItem = {
   needs_review: boolean;
   review_reason: string | null;
   position_hint: string | null;
+  bbox: ShelfRecognitionBbox | null;
 };
 
 export type ShelfRecognitionPayload = {
@@ -48,7 +56,8 @@ export type ShelfRecognitionResult = ShelfRecognitionPayload & {
 
 // "Свободные" типы для парсинга ответов AI — разные провайдеры возвращают поля
 // под разными ключами (name/product_name/title, price/price_text/current_price и т.д.).
-export type LooseRecognitionItem = Partial<ShelfRecognitionItem> & {
+export type LooseRecognitionItem = Omit<Partial<ShelfRecognitionItem>, "bbox"> & {
+  bbox?: unknown;
   name?: unknown;
   product_name?: unknown;
   product?: unknown;

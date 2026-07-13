@@ -4,6 +4,7 @@ import { recognizeShelfPhotoWithGemini } from "./gemini";
 import { recognizeShelfPhotoWithOpenAI } from "./openai";
 import { recognizeShelfPhotoWithOpenRouter } from "./openrouter";
 import type { ShelfRecognitionInput, ShelfRecognitionResult } from "./types";
+import type { AiProvider, AiTaskConfig } from "../ai-config";
 
 export function hasShelfRecognitionKey() {
   const aiConfig = getAiRuntimeConfig();
@@ -50,27 +51,34 @@ export async function recognizeShelfPhoto(input: ShelfRecognitionInput): Promise
   const aiConfig = getAiRuntimeConfig();
 
   // Строим цепочку попыток: основной vision + fallback.
-  const attempts: Array<{ provider: string }> = [{ provider: aiConfig.vision.provider }];
+  const attempts: AiTaskConfig[] = [aiConfig.vision];
 
-  // Добавляем fallback, если он другой провайдер и для него есть ключ.
-  if (aiConfig.fallback.provider !== "disabled" && aiConfig.fallback.provider !== aiConfig.vision.provider) {
-    const hasKey =
-      (aiConfig.fallback.provider === "openrouter" && process.env.OPENROUTER_API_KEY) ||
-      (aiConfig.fallback.provider === "gemini" && process.env.GEMINI_API_KEY) ||
-      (aiConfig.fallback.provider === "openai" && process.env.OPENAI_API_KEY);
-    if (hasKey) {
-      attempts.push({ provider: aiConfig.fallback.provider });
-    }
+  // Fallback может использовать тот же провайдер с другой моделью (например OpenRouter free → paid).
+  if (
+    aiConfig.fallback.provider !== "disabled" &&
+    hasProviderKey(aiConfig.fallback.provider) &&
+    (aiConfig.fallback.provider !== aiConfig.vision.provider || aiConfig.fallback.model !== aiConfig.vision.model)
+  ) {
+    attempts.push(aiConfig.fallback, aiConfig.fallback);
+  }
+
+  if (
+    aiConfig.visionRescue.provider !== "disabled" &&
+    hasProviderKey(aiConfig.visionRescue.provider) &&
+    !attempts.some((attempt) =>
+      attempt.provider === aiConfig.visionRescue.provider && attempt.model === aiConfig.visionRescue.model)
+  ) {
+    attempts.push(aiConfig.visionRescue);
   }
 
   let lastError: unknown;
   for (const [index, attempt] of attempts.entries()) {
     try {
-      return await recognizeWithProvider(attempt.provider, input);
+      return await recognizeWithProvider(attempt.provider, attempt.model, input);
     } catch (error) {
       lastError = error;
       // На основной попытке при транзитной ошибке (лимит/перегрузка) пробуем fallback.
-      if (index === 0 && isAiFallbackCandidate(error) && attempts.length > 1) {
+      if (isAiFallbackCandidate(error) && index < attempts.length - 1) {
         continue;
       }
       throw error;
@@ -80,15 +88,22 @@ export async function recognizeShelfPhoto(input: ShelfRecognitionInput): Promise
   throw lastError instanceof Error ? lastError : new Error("Shelf recognition failed.");
 }
 
-async function recognizeWithProvider(provider: string, input: ShelfRecognitionInput): Promise<ShelfRecognitionResult> {
+function hasProviderKey(provider: AiProvider) {
+  if (provider === "openrouter") return Boolean(process.env.OPENROUTER_API_KEY);
+  if (provider === "gemini") return Boolean(process.env.GEMINI_API_KEY);
+  if (provider === "openai") return Boolean(process.env.OPENAI_API_KEY);
+  return false;
+}
+
+async function recognizeWithProvider(provider: string, model: string, input: ShelfRecognitionInput): Promise<ShelfRecognitionResult> {
   if (provider === "openai") {
-    return recognizeShelfPhotoWithOpenAI(input);
+    return recognizeShelfPhotoWithOpenAI(input, model);
   }
   if (provider === "gemini") {
-    return recognizeShelfPhotoWithGemini(input);
+    return recognizeShelfPhotoWithGemini(input, model);
   }
   if (provider === "openrouter") {
-    return recognizeShelfPhotoWithOpenRouter(input);
+    return recognizeShelfPhotoWithOpenRouter(input, model);
   }
   throw new Error(`Vision provider ${provider} не поддерживается.`);
 }

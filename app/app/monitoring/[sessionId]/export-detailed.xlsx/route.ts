@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
+import Excel from "exceljs";
 
 import { createSupabaseServerClient } from "../../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../../server/auth";
@@ -83,8 +83,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   const rows = (items ?? []).map((item) => buildExportRow(item));
   const summary = buildExportSummary(rows);
-  const workbook = XLSX.utils.book_new();
-  const summarySheet = XLSX.utils.aoa_to_sheet([
+  const workbook = new Excel.Workbook();
+  const summaryRows = [
     ["Параметр", "Значение"],
     ["Компания", membershipResult.membership.companyName],
     ["Магазин", session.stores?.name ?? ""],
@@ -107,10 +107,11 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["Большая разница цены 5%+", String(summary.largePriceDiff)],
     ["Нет нашей цены", String(summary.missingOwnPrice)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
-  ]);
+  ];
 
-  summarySheet["!cols"] = [{ wch: 30 }, { wch: 52 }];
-  XLSX.utils.book_append_sheet(workbook, summarySheet, "Сводка");
+  const summarySheet = workbook.addWorksheet("Сводка");
+  summarySheet.addRows(summaryRows);
+  summarySheet.columns = [{ width: 30 }, { width: 52 }];
   appendRowsSheet(workbook, "Все строки", rows, "Нет товаров для экспорта");
   appendRowsSheet(workbook, "Сравнение цен", comparisonRows(rows), "Нет строк для сравнения цен");
   appendRowsSheet(workbook, "Конкурент дешевле", competitorCheaperRows(rows), "Нет строк, где конкурент дешевле");
@@ -123,7 +124,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   appendRowsSheet(workbook, "Продукты", rows.filter((row) => row["Отдел"] === "Продукты"), "Нет товаров по продуктам");
   appendRowsSheet(workbook, "Химия", rows.filter((row) => row["Отдел"] === "Химия"), "Нет товаров по химии");
 
-  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   const filename = buildFilename(session.stores?.name ?? "monitoring", session.id);
 
   return new NextResponse(buffer, {
@@ -215,11 +216,16 @@ function buildExportRow(item: ExportItem) {
   };
 }
 
-function appendRowsSheet(workbook: XLSX.WorkBook, name: string, rows: ExportRow[], emptyMessage: string) {
-  const sheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": emptyMessage }]);
-  sheet["!cols"] = ROW_WIDTHS.map((wch) => ({ wch }));
-  sheet["!autofilter"] = rows.length > 0 ? { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: ROW_WIDTHS.length - 1 } }) } : undefined;
-  XLSX.utils.book_append_sheet(workbook, sheet, name);
+function appendRowsSheet(workbook: Excel.Workbook, name: string, rows: ExportRow[], emptyMessage: string) {
+  const worksheet = workbook.addWorksheet(name);
+  const data = rows.length > 0 ? rows : [{ "Статус": emptyMessage }];
+  const headers = Object.keys(data[0]);
+  worksheet.columns = headers.map((header, index) => ({ header, key: header, width: ROW_WIDTHS[index] ?? 18 }));
+  worksheet.addRows(data);
+  if (rows.length > 0) {
+    worksheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: headers.length } };
+  }
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
 }
 
 function comparisonRows(rows: ExportRow[]) {

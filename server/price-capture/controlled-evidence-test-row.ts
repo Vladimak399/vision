@@ -11,6 +11,8 @@ import {
   type CompetitorShelfItemInsertPayload,
 } from "./evidence-persistence";
 
+export { COMPETITOR_SHELF_ITEMS_TABLE } from "./evidence-persistence";
+
 export const PRICE_CAPTURE_RUNS_TABLE = "price_capture_runs" as const;
 export const CONTROLLED_TEST_ROW_MARKER_PREFIX = "PV_CONTROLLED_EVIDENCE_TEST_ROW" as const;
 export const CONTROLLED_TEST_ROW_REVIEW_REASON = "controlled_test_row_do_not_use_for_reports" as const;

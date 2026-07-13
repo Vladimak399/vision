@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import Excel from "exceljs";
 
 /**
  * Парсер шаблона мониторинга Яны.
@@ -78,55 +78,31 @@ export function splitStoreLabel(label: string): { name: string; address: string 
  * Возвращает map: columnIndex → наша ТТ (label), которой принадлежит колонка.
  * Колонки 0-1 (Наименование/Штрихкод) не входят в блоки.
  */
-function buildColumnToOwnStore(
-  merges: XLSX.Range[] | undefined,
-  row0: string[],
-): Map<number, string> {
+function buildColumnToOwnStore(worksheet: Excel.Worksheet): Map<number, string> {
   const map = new Map<number, string>();
-  if (!merges) {
-    return map;
+
+  for (let column = 3; column <= worksheet.columnCount; column += 1) {
+    const label = cellText(worksheet.getCell(1, column).value);
+    if (label) map.set(column - 1, label);
   }
-  for (const merge of merges) {
-    // только строка 0
-    if (merge.s.r !== 0 || merge.e.r !== 0) {
-      continue;
-    }
-    const startCol = merge.s.c;
-    const endCol = merge.e.c;
-    // пропускаем шапку товаров (колонки 0-1)
-    if (startCol <= 1) {
-      continue;
-    }
-    const label = (row0[startCol] ?? "").toString().trim();
-    if (!label) {
-      continue;
-    }
-    for (let c = startCol; c <= endCol; c++) {
-      map.set(c, label);
-    }
-  }
+
   return map;
 }
 
 function parseSheet(
-  ws: XLSX.WorkSheet,
+  worksheet: Excel.Worksheet,
   department: Department,
   week: 1 | 2,
 ): { products: ParsedProduct[]; columns: ParsedTemplateColumn[]; storeLabels: Set<string> } {
-  const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, raw: true, defval: "" });
-  const row0 = rows[0] ?? [];
-  const row1 = rows[1] ?? [];
-
-  const merges = ws["!merges"];
-  const columnToOwnStore = buildColumnToOwnStore(merges, row0);
+  const columnToOwnStore = buildColumnToOwnStore(worksheet);
 
   const products: ParsedProduct[] = [];
   const storeLabels = new Set<string>();
   const columns: ParsedTemplateColumn[] = [];
 
   // --- Колонки: проходим по row1, пропускаем 0-1 ---
-  for (let c = 2; c < row1.length; c++) {
-    const cellLabel = (row1[c] ?? "").toString().trim();
+  for (let c = 2; c < worksheet.columnCount; c++) {
+    const cellLabel = cellText(worksheet.getCell(2, c + 1).value);
     const ourStoreLabel = columnToOwnStore.get(c);
     if (!cellLabel || !ourStoreLabel) {
       continue;
@@ -158,11 +134,9 @@ function parseSheet(
 
   // --- Товары и категории ---
   let currentCategory: string | null = null;
-  for (let r = 2; r < rows.length; r++) {
-    const row = rows[r] ?? [];
-    const name = (row[0] ?? "").toString().trim();
-    const barcodeRaw = row[1];
-    const barcode = barcodeRaw === null || barcodeRaw === undefined ? "" : String(barcodeRaw).trim();
+  for (let r = 2; r < worksheet.rowCount; r++) {
+    const name = cellText(worksheet.getCell(r + 1, 1).value);
+    const barcode = cellText(worksheet.getCell(r + 1, 2).value);
 
     if (!name) {
       continue;
@@ -197,22 +171,19 @@ function parseSheet(
   return { products: deduped, columns, storeLabels };
 }
 
-export function parseMonitoringTemplate(file: Buffer, week: 1 | 2): ParsedTemplate {
-  const wb = XLSX.read(file, { type: "buffer" });
+export async function parseMonitoringTemplate(file: Buffer, week: 1 | 2): Promise<ParsedTemplate> {
+  const workbook = new Excel.Workbook();
+  await workbook.xlsx.load(file as unknown as ArrayBuffer);
   const products: ParsedProduct[] = [];
   const columns: ParsedTemplateColumn[] = [];
   const storeLabelSet = new Set<string>();
 
-  for (const sheetName of wb.SheetNames) {
-    const department = SHEET_TO_DEPARTMENT[sheetName];
+  for (const worksheet of workbook.worksheets) {
+    const department = SHEET_TO_DEPARTMENT[worksheet.name];
     if (!department) {
       continue;
     }
-    const ws = wb.Sheets[sheetName];
-    if (!ws) {
-      continue;
-    }
-    const parsed = parseSheet(ws, department, week);
+    const parsed = parseSheet(worksheet, department, week);
     products.push(...parsed.products);
     columns.push(...parsed.columns);
     for (const label of parsed.storeLabels) {
@@ -244,4 +215,16 @@ export function parseMonitoringTemplate(file: Buffer, week: 1 | 2): ParsedTempla
   }
 
   return { products, stores, columns };
+}
+
+function cellText(value: Excel.CellValue): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object") {
+    if ("result" in value) return cellText(value.result as Excel.CellValue);
+    if ("text" in value && typeof value.text === "string") return value.text.trim();
+    if ("richText" in value && Array.isArray(value.richText)) return value.richText.map((part) => part.text).join("").trim();
+    return "";
+  }
+  return String(value).trim().replace(/\.0$/, "");
 }

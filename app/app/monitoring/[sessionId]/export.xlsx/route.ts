@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
+import Excel from "exceljs";
 
 import { createSupabaseServerClient } from "../../../../../lib/supabase/server";
 import { getCurrentUser } from "../../../../../server/auth";
@@ -57,11 +57,16 @@ type ExportItem = {
   department: string | null;
   status: string;
   created_at: string;
-  evidence: {
+  bbox: Record<string, number> | null;
+  monitoring_photos: {
+    storage_path: string;
+  } | null;
+  evidence: Array<{
     id: string;
     photo_id: string;
     storage_path: string;
-  } | null;
+    bbox: Record<string, number> | null;
+  }> | null;
   matches: ExportMatch[] | null;
 };
 
@@ -107,7 +112,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   const { data: items, error: itemsError } = await supabase
     .from("recognized_items")
     .select(
-      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text, own_price_minor, currency)), evidence(id, photo_id, storage_path)",
+      "id, raw_name, brand, size_text, price_minor, old_price_minor, promo_price_minor, currency, confidence, link_confidence, price_tag_text, product_visible_text, review_reason, position_hint, department, status, created_at, bbox, monitoring_photos(storage_path), matches(id, score, decision, is_active, catalog_products(external_sku, name, brand, size_text, own_price_minor, currency)), evidence(id, photo_id, storage_path, bbox)",
     )
     .eq("company_id", companyId)
     .eq("session_id", sessionId)
@@ -119,10 +124,10 @@ export async function GET(_request: Request, { params }: RouteContext) {
     return NextResponse.json({ error: itemsError.message }, { status: 500 });
   }
 
-  const workbook = XLSX.utils.book_new();
+  const workbook = new Excel.Workbook();
   const rows = (items ?? []).map((item) => buildExportRow(item));
   const summary = buildExportSummary(items ?? []);
-  const summarySheet = XLSX.utils.aoa_to_sheet([
+  const summaryRows = [
     ["Параметр", "Значение"],
     ["Компания", membershipResult.membership.companyName],
     ["Магазин", session.stores?.name ?? ""],
@@ -140,13 +145,13 @@ export async function GET(_request: Request, { params }: RouteContext) {
     ["С Evidence (фото-доказательство)", String(summary.withEvidence)],
     ["Без Evidence", String(summary.withoutEvidence)],
     ["Фильтр статусов", EXPORT_STATUSES.join(", ")],
-  ]);
-  const itemsSheet = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ "Статус": "Нет товаров для экспорта" }]);
+  ];
+  const summarySheet = workbook.addWorksheet("Сводка");
+  summarySheet.addRows(summaryRows);
+  summarySheet.columns = [{ width: 38 }, { width: 60 }];
+  appendObjectSheet(workbook, "Товары", rows, "Нет товаров для экспорта");
 
-  XLSX.utils.book_append_sheet(workbook, summarySheet, "Сводка");
-  XLSX.utils.book_append_sheet(workbook, itemsSheet, "Товары");
-
-  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   const filename = buildFilename(session.stores?.name ?? "monitoring", session.id);
 
   return new NextResponse(buffer, {
@@ -156,6 +161,16 @@ export async function GET(_request: Request, { params }: RouteContext) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function appendObjectSheet(workbook: Excel.Workbook, name: string, rows: Array<Record<string, unknown>>, emptyMessage: string) {
+  const worksheet = workbook.addWorksheet(name);
+  const data = rows.length > 0 ? rows : [{ "Статус": emptyMessage }];
+  const headers = Object.keys(data[0]);
+  worksheet.columns = headers.map((header) => ({ header, key: header, width: Math.min(60, Math.max(14, header.length + 4)) }));
+  worksheet.addRows(data);
+  worksheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: data.length + 1, column: headers.length } };
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
 }
 
 function buildExportSummary(items: ExportItem[]) {
@@ -177,7 +192,7 @@ function buildExportSummary(items: ExportItem[]) {
       if (diffPercent !== null && Math.abs(diffPercent) >= 0.05) summary.largePriceDiff += 1;
 
       // Check evidence
-      if (!item.evidence) summary.withoutEvidence += 1;
+      if (!item.evidence?.length) summary.withoutEvidence += 1;
       else summary.withEvidence += 1;
 
       return summary;
@@ -206,6 +221,7 @@ function buildExportRow(item: ExportItem) {
   const diffPercent = competitorPrice !== null && ownPrice !== null && ownPrice > 0 ? diffMinor! / ownPrice : null;
   const notFound = item.status === "unmatched";
   const needsAttention = notFound || item.status === "needs_review" || !product || (diffPercent !== null && Math.abs(diffPercent) >= 0.05);
+  const evidence = item.evidence?.[0] ?? null;
 
   return {
     "Отдел": getDepartmentLabel(item.department),
@@ -213,8 +229,10 @@ function buildExportRow(item: ExportItem) {
     "Нужно внимание": needsAttention ? "Да" : "Нет",
     "Не найдено в ассортименте": notFound ? "Да" : "Нет",
     "Комментарий": buildComment({ item, productFound: Boolean(product), notFound, diffPercent }),
-    "Evidence ID": item.evidence?.id ?? "",
-    "Evidence Photo ID": item.evidence?.photo_id ?? "",
+    "Evidence ID": evidence?.id ?? "",
+    "Исходное фото": item.monitoring_photos?.storage_path ?? "",
+    "Crop ценника": evidence?.storage_path ?? "",
+    "BBox": JSON.stringify(evidence?.bbox ?? item.bbox ?? ""),
     "Каталог SKU": product?.external_sku ?? "",
     "Каталог товар": product?.name ?? "",
     "Каталог бренд": product?.brand ?? "",

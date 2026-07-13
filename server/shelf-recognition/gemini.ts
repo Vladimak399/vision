@@ -1,5 +1,5 @@
 import { getAiRuntimeConfig } from "../ai-config";
-import { AiHttpError, isAiFallbackCandidate, withAiRetry } from "../ai-retry";
+import { AiHttpError, withAiRetry } from "../ai-retry";
 import { parseRecognitionPayload } from "./normalize";
 import { SHELF_RECOGNITION_PROMPT } from "./prompt";
 import type { ShelfRecognitionInput, ShelfRecognitionResult } from "./types";
@@ -13,30 +13,12 @@ type GeminiGenerateContentResponse = {
   error?: { message?: string };
 };
 
-export async function recognizeShelfPhotoWithGemini(input: ShelfRecognitionInput): Promise<ShelfRecognitionResult> {
+export async function recognizeShelfPhotoWithGemini(input: ShelfRecognitionInput, modelOverride?: string): Promise<ShelfRecognitionResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY не настроен. Добавьте переменную в Vercel Environment Variables.");
 
   const aiConfig = getAiRuntimeConfig();
-  if (aiConfig.vision.provider !== "gemini") throw new Error("AI-провайдер отключен или не поддерживается. Проверьте AI_VISION_PROVIDER и AI_TEXT_PROVIDER.");
-
-  const models = [aiConfig.vision.model];
-  if (aiConfig.fallback.provider === "gemini" && aiConfig.fallback.model && aiConfig.fallback.model !== aiConfig.vision.model) {
-    models.push(aiConfig.fallback.model);
-  }
-
-  let lastError: unknown;
-  for (const [index, model] of models.entries()) {
-    try {
-      return await runGeminiVisionRequest({ apiKey, input, model });
-    } catch (error) {
-      lastError = error;
-      if (index === 0 && isAiFallbackCandidate(error) && models.length > 1) continue;
-      break;
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("Не удалось выполнить Gemini OCR запрос.");
+  return runGeminiVisionRequest({ apiKey, input, model: modelOverride || aiConfig.vision.model });
 }
 
 async function runGeminiVisionRequest({ apiKey, input, model }: { apiKey: string; input: ShelfRecognitionInput; model: string }) {

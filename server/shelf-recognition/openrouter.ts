@@ -5,9 +5,9 @@ import { SHELF_RECOGNITION_PROMPT } from "./prompt";
 import type { ShelfRecognitionInput, ShelfRecognitionResult } from "./types";
 
 // OpenRouter: OpenAI-совместимый chat completions API, поддерживает vision.
-// Бесплатные vision-модели: google/gemma-3-27b-it:free и др.
+// Free Models Router сам выбирает доступную бесплатную модель с поддержкой image input.
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite";
+const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
 
 type OpenRouterChoice = {
   message?: { content?: string | Array<{ text?: string }> };
@@ -21,6 +21,7 @@ type OpenRouterResponse = {
 
 export async function recognizeShelfPhotoWithOpenRouter(
   input: ShelfRecognitionInput,
+  modelOverride?: string,
 ): Promise<ShelfRecognitionResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -28,16 +29,16 @@ export async function recognizeShelfPhotoWithOpenRouter(
   }
 
   const aiConfig = getAiRuntimeConfig();
-  const model =
-    aiConfig.vision.provider === "openrouter"
+  const model = modelOverride || (aiConfig.vision.provider === "openrouter"
       ? aiConfig.vision.model || DEFAULT_OPENROUTER_MODEL
-      : DEFAULT_OPENROUTER_MODEL;
+      : DEFAULT_OPENROUTER_MODEL);
 
   const startedAt = Date.now();
 
   const responseBody = await withAiRetry(async () => {
     const response = await fetch(OPENROUTER_API_URL, {
       method: "POST",
+      signal: AbortSignal.timeout(model === "openrouter/free" || model.endsWith(":free") ? 30_000 : 90_000),
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
@@ -75,20 +76,40 @@ export async function recognizeShelfPhotoWithOpenRouter(
 
   const outputText = extractOutputText(responseBody);
   if (!outputText) {
-    throw new Error("OpenRouter вернул пустой ответ (нет текста).");
+    throw new AiHttpError("OpenRouter вернул пустой ответ (нет текста).", 502);
   }
 
   const payload = parseRecognitionPayload(outputText, "OpenRouter");
+  if (payload.normalizeError) {
+    throw new AiHttpError(`OpenRouter вернул некорректный JSON: ${payload.normalizeError}`, 502);
+  }
+  if (payload.items.length === 0 && payload.warnings.length === 0) {
+    throw new AiHttpError("OpenRouter не вернул распознанных позиций или предупреждений.", 502);
+  }
+  if (payload.items.length > 0 && !payload.items.some((item) => item.bbox)) {
+    throw new AiHttpError("OpenRouter распознал позиции без bbox ценников.", 502);
+  }
   return {
     ...payload,
     usage: {
       model,
       input_tokens: responseBody?.usage?.prompt_tokens ?? 0,
       output_tokens: responseBody?.usage?.completion_tokens ?? 0,
-      estimated_cost_microusd: 0, // бесплатная модель
+      estimated_cost_microusd: estimateOpenRouterCost(model, responseBody?.usage),
       duration_ms: Date.now() - startedAt,
     },
   };
+}
+
+function estimateOpenRouterCost(model: string, usage: OpenRouterResponse["usage"]) {
+  if (model === "openrouter/free" || model.endsWith(":free")) return 0;
+  if (model === "qwen/qwen3-vl-30b-a3b-instruct") {
+    return Math.round((usage?.prompt_tokens ?? 0) * 0.15 + (usage?.completion_tokens ?? 0) * 0.6);
+  }
+  if (model === "openai/gpt-4.1-mini") {
+    return Math.round((usage?.prompt_tokens ?? 0) * 0.4 + (usage?.completion_tokens ?? 0) * 1.6);
+  }
+  return null;
 }
 
 function toOpenRouterErrorMessage(status: number, message: string | undefined) {

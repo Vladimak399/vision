@@ -78,7 +78,7 @@ export function createSupabaseEvidenceClientFromEnv(
     return failure("missing_publishable_key", `${SUPABASE_EVIDENCE_PUBLISHABLE_KEY_ENV} is required for browser/authenticated clients.`, diagnostics);
   }
 
-  const key = useServiceRole ? serviceRoleKey : publishableKey;
+  const key = useServiceRole ? serviceRoleKey! : publishableKey!;
   const client = createClient(url, key, {
     auth: {
       persistSession: !useServiceRole,
@@ -90,7 +90,7 @@ export function createSupabaseEvidenceClientFromEnv(
 }
 
 export function adaptSupabaseClient(client: Pick<SupabaseClient, "from">): SupabaseEvidenceClient {
-  return { from: (table: string) => client.from(table) } as SupabaseEvidenceClient;
+  return { from: (table: string) => client.from(table) } as unknown as SupabaseEvidenceClient;
 }
 
 export function buildSupabaseEvidenceClientEnvChecklist(): string[] {

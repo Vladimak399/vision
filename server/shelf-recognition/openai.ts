@@ -76,7 +76,7 @@ type OpenAIResponsesPayload = {
   }>;
 };
 
-export async function recognizeShelfPhotoWithOpenAI(input: ShelfRecognitionInput): Promise<ShelfRecognitionResult> {
+export async function recognizeShelfPhotoWithOpenAI(input: ShelfRecognitionInput, modelOverride?: string): Promise<ShelfRecognitionResult> {
   const env = getServerEnv();
 
   if (!env.OPENAI_API_KEY) {
@@ -85,11 +85,7 @@ export async function recognizeShelfPhotoWithOpenAI(input: ShelfRecognitionInput
 
   const aiConfig = getAiRuntimeConfig();
 
-  if (aiConfig.vision.provider !== "openai") {
-    throw new Error(`Vision provider ${aiConfig.vision.provider} is not supported for shelf photo OCR yet.`);
-  }
-
-  const model = aiConfig.vision.model;
+  const model = modelOverride || aiConfig.vision.model;
   const startedAt = Date.now();
   const imageUrl = getInputImageUrl(input);
 

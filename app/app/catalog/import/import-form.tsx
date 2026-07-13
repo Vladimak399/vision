@@ -32,7 +32,7 @@ export function CatalogImportForm() {
     <section className="card soft">
       <h2>Загрузить файл ассортимента</h2>
       <p className="lead">
-        Поддерживаются CSV, XLSX и XLS. Обязательные колонки: SKU и название.
+        Поддерживаются CSV и XLSX. Обязательные колонки: SKU и название.
         После импорта товары сразу доступны в review.
       </p>
       <form
@@ -50,7 +50,7 @@ export function CatalogImportForm() {
         <input
           type="file"
           name="file"
-          accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+          accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           required
         />
         <button type="submit" disabled={isSubmitting}>

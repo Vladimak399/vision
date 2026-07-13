@@ -1,7 +1,7 @@
 "use server";
 
 import Papa from "papaparse";
-import * as XLSX from "xlsx";
+import Excel from "exceljs";
 
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { createCatalogProduct } from "../../../server/catalog";
@@ -104,17 +104,42 @@ async function parseImportFile(file: File): Promise<ImportRow[]> {
   const extension = file.name.split(".").pop()?.toLowerCase();
   const buffer = Buffer.from(await file.arrayBuffer());
 
-  if (extension === "xlsx" || extension === "xls") {
-    const workbook = XLSX.read(buffer, { type: "buffer" });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) {
-      return [];
+  if (extension === "xlsx") {
+    const workbook = new Excel.Workbook();
+    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) return [];
+
+    const headers = Array.from({ length: worksheet.columnCount }, (_, index) =>
+      normalizeHeader(String(excelValue(worksheet.getCell(1, index + 1).value))),
+    );
+    const rows: ImportRow[] = [];
+
+    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+      const row = Object.fromEntries(headers.flatMap((header, index) =>
+        header ? [[header, excelValue(worksheet.getCell(rowNumber, index + 1).value)]] : [],
+      ));
+      if (Object.values(row).some((value) => String(value).trim())) rows.push(row);
     }
 
-    return normalizeRows(XLSX.utils.sheet_to_json<ImportRow>(workbook.Sheets[firstSheetName], { defval: "" }));
+    return rows;
   }
 
+  if (extension === "xls") throw new Error("Формат XLS не поддерживается. Сохраните файл как XLSX или CSV.");
+
   return parseCsv(buffer);
+}
+
+function excelValue(value: Excel.CellValue): string | number | boolean {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object") {
+    if ("result" in value) return excelValue(value.result as Excel.CellValue);
+    if ("text" in value && typeof value.text === "string") return value.text;
+    if ("richText" in value && Array.isArray(value.richText)) return value.richText.map((part) => part.text).join("");
+    return String(value);
+  }
+  return value;
 }
 
 async function markImportFailed(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, importId: string | null, message: string) {

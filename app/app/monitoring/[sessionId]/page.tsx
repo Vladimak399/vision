@@ -318,9 +318,14 @@ function NextAction({
 
   if (recognizedCount > 0) {
     return (
-      <Link className="btn" href={`/app/monitoring/${sessionId}/export.xlsx`}>
-        Выгрузить Excel
-      </Link>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+        <Link className="btn" href={`/app/monitoring/${sessionId}/export.xlsx`}>
+          Выгрузить Excel
+        </Link>
+        <Link className="btn btn-secondary" href={`/app/monitoring/${sessionId}/export.json`}>
+          Выгрузить JSON
+        </Link>
+      </div>
     );
   }
 
@@ -366,18 +371,23 @@ function SessionStage({
 function ExportSection({ sessionId, reviewCount, recognizedCount }: { sessionId: string; reviewCount: number; recognizedCount: number }) {
   const message =
     recognizedCount === 0
-      ? "После распознавания здесь будет доступна выгрузка Excel."
+      ? "После распознавания здесь будут доступны Excel и JSON."
       : reviewCount > 0
-        ? `Осталось проверить ${reviewCount} товаров. Excel можно выгрузить сейчас, но лучше сначала завершить проверку.`
-        : "Все товары проверены. Можно выгружать Excel.";
+        ? `Осталось проверить ${reviewCount} товаров. Отчет можно выгрузить сейчас, но лучше сначала завершить проверку.`
+        : "Все товары проверены. Можно выгружать отчет.";
 
   return (
     <section className="card soft">
       <h2 style={{ marginTop: 0 }}>Выгрузка</h2>
       <p style={{ color: "#4b5563" }}>{message}</p>
-      <Link className="btn" href={`/app/monitoring/${sessionId}/export.xlsx`}>
-        Выгрузить Excel
-      </Link>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+        <Link className="btn" href={`/app/monitoring/${sessionId}/export.xlsx`}>
+          Выгрузить Excel
+        </Link>
+        <Link className="btn btn-secondary" href={`/app/monitoring/${sessionId}/export.json`}>
+          Выгрузить JSON
+        </Link>
+      </div>
     </section>
   );
 }
