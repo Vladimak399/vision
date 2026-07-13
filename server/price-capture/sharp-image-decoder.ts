@@ -1,4 +1,4 @@
-import sharp from "sharp";
+import sharp, { type Sharp, type SharpOptions } from "sharp";
 
 import type {
   DecodedImagePixels,
@@ -98,13 +98,13 @@ export class SharpImageDecoder implements ImageDecoder {
     }
   }
 
-  private sharpInputOptions(): sharp.SharpOptions | undefined {
+  private sharpInputOptions(): SharpOptions | undefined {
     if (this.options.limitInputPixels === null) return undefined;
     return { limitInputPixels: this.options.limitInputPixels };
   }
 }
 
-function convertToPixelFormat(pipeline: sharp.Sharp, pixelFormat: DecodedPixelFormat): sharp.Sharp {
+function convertToPixelFormat(pipeline: Sharp, pixelFormat: DecodedPixelFormat): Sharp {
   if (pixelFormat === "grayscale") return pipeline.grayscale();
   if (pixelFormat === "rgb") return pipeline.removeAlpha();
   return pipeline.ensureAlpha();
